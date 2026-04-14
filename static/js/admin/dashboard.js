@@ -9,11 +9,11 @@ document.addEventListener('DOMContentLoaded', function() {
 let adminAnalytics = {
     loginActivity: {
         labels: getLast7Days(),
-        data: [12, 19, 8, 14, 11, 16, 18],
+        data: [],
     },
     roleDistribution: {
-        labels: ['Admin', 'HR', 'Department Head', 'Employee'],
-        data: [2, 5, 8, 120],
+        labels: [],
+        data: [],
     },
 };
 
@@ -26,9 +26,45 @@ async function initializeDashboard() {
 
     // Load live summary cards
     loadAdminSummaryCards();
+    loadRecentActivity();
     
     // Add event listeners
     addEventListeners();
+}
+
+async function loadRecentActivity() {
+    const feed = document.getElementById('recentActivityFeed');
+    if (!feed) return;
+
+    try {
+        const response = await fetch('/api/admin/recent-activity');
+        if (!response.ok) {
+            throw new Error('Unable to load activity');
+        }
+
+        const payload = await response.json();
+        const items = payload.items || [];
+
+        if (!items.length) {
+            feed.innerHTML = '<p class="activity-time" style="padding: 1rem;">No recent activity.</p>';
+            return;
+        }
+
+        feed.innerHTML = items.map((item) => `
+            <div class="activity-item">
+                <div class="activity-icon">
+                    <i class="fas fa-${item.icon || 'info-circle'}"></i>
+                </div>
+                <div class="activity-details">
+                    <p class="activity-action">${item.action || 'Activity'}</p>
+                    <p class="activity-user">by ${item.actor || 'System'}</p>
+                </div>
+                <p class="activity-time">${item.time || '--'}</p>
+            </div>
+        `).join('');
+    } catch (error) {
+        feed.innerHTML = '<p class="activity-time" style="padding: 1rem;">Activity feed is unavailable.</p>';
+    }
 }
 
 async function loadAdminAnalytics() {

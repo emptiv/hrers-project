@@ -3,18 +3,170 @@
    ================================= */
 
 let currentEditingDeptId = null;
+let departmentsData = [];
+let headCandidates = [];
 
 document.addEventListener('DOMContentLoaded', function() {
     initializeDepartmentManagement();
 });
 
 function initializeDepartmentManagement() {
+    loadDepartmentManagementData();
     setupEventListeners();
     setupViewToggle();
     setupSearchAndFilters();
 }
 
+async function loadDepartmentManagementData() {
+    try {
+        const [departmentsResponse, headsResponse] = await Promise.all([
+            fetch('/accounts/departments'),
+            fetch('/accounts/department-head-candidates'),
+        ]);
+
+        const departmentsPayload = departmentsResponse.ok ? await departmentsResponse.json() : { items: [] };
+        const headsPayload = headsResponse.ok ? await headsResponse.json() : { items: [] };
+
+        departmentsData = Array.isArray(departmentsPayload.items) ? departmentsPayload.items : [];
+        headCandidates = Array.isArray(headsPayload.items) ? headsPayload.items : [];
+
+        renderDepartments(departmentsData);
+        renderHeadCandidates(headCandidates);
+    } catch (error) {
+        departmentsData = [];
+        renderDepartments([]);
+    }
+}
+
+function formatCreatedDate(isoString) {
+    if (!isoString) return '--';
+    const value = new Date(isoString);
+    if (Number.isNaN(value.getTime())) return '--';
+    return value.toLocaleDateString(undefined, { month: 'short', day: '2-digit', year: 'numeric' });
+}
+
+function renderDepartments(items) {
+    const grid = document.getElementById('departmentsGrid');
+    const tableBody = document.getElementById('departmentsTableBody');
+    if (!grid || !tableBody) return;
+
+    if (!items.length) {
+        grid.innerHTML = '<p style="padding:16px;">No departments found.</p>';
+        tableBody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:20px;">No departments found.</td></tr>';
+        return;
+    }
+
+    grid.innerHTML = items.map((dept) => {
+        const headLabel = dept.headName
+            ? `<p class="info-value"><i class="fas fa-user-circle"></i> ${dept.headName}</p>`
+            : '<p class="info-value unassigned"><i class="fas fa-user-slash"></i> Not Assigned</p>';
+
+        return `
+            <div class="department-card" data-dept-id="${dept.id}">
+                <div class="card-header">
+                    <h3>${dept.name}</h3>
+                    <button class="action-btn" onclick="toggleCardDropdown(this)">
+                        <i class="fas fa-ellipsis-v"></i>
+                    </button>
+                    <div class="dropdown-menu">
+                        <a href="#" class="dropdown-item edit-dept" data-dept-id="${dept.id}"><i class="fas fa-edit"></i> Edit</a>
+                        <a href="#" class="dropdown-item assign-head" data-dept-id="${dept.id}"><i class="fas fa-user-tie"></i> Assign Head</a>
+                        <hr>
+                        <a href="#" class="dropdown-item delete-dept" data-dept-id="${dept.id}"><i class="fas fa-trash"></i> Delete</a>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="dept-info">
+                        <div class="info-group">
+                            <span class="info-label">Department Head</span>
+                            ${headLabel}
+                        </div>
+                        <div class="info-group">
+                            <span class="info-label">Total Employees</span>
+                            <p class="info-value">${Number(dept.employeeCount || 0)}</p>
+                        </div>
+                        <div class="info-group">
+                            <span class="info-label">Email</span>
+                            <p class="info-value">${dept.email || '--'}</p>
+                        </div>
+                        <div class="info-group">
+                            <span class="info-label">Location</span>
+                            <p class="info-value">${dept.location || '--'}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    tableBody.innerHTML = items.map((dept) => `
+        <tr class="dept-row" data-dept-id="${dept.id}">
+            <td><strong>${dept.name}</strong></td>
+            <td>${dept.headName || '<span class="unassigned">Not Assigned</span>'}</td>
+            <td>${Number(dept.employeeCount || 0)}</td>
+            <td>${dept.email || '--'}</td>
+            <td>${dept.location || '--'}</td>
+            <td>${formatCreatedDate(dept.createdAt)}</td>
+            <td class="action-cell">
+                <button class="action-btn" onclick="toggleDropdown(this)">
+                    <i class="fas fa-ellipsis-v"></i>
+                </button>
+                <div class="dropdown-menu">
+                    <a href="#" class="dropdown-item edit-dept" data-dept-id="${dept.id}"><i class="fas fa-edit"></i> Edit</a>
+                    <a href="#" class="dropdown-item assign-head" data-dept-id="${dept.id}"><i class="fas fa-user-tie"></i> Assign Head</a>
+                    <hr>
+                    <a href="#" class="dropdown-item delete-dept" data-dept-id="${dept.id}"><i class="fas fa-trash"></i> Delete</a>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function renderHeadCandidates(items) {
+    const list = document.getElementById('headList');
+    if (!list) return;
+
+    if (!items.length) {
+        list.innerHTML = '<div class="head-option">No eligible users found.</div>';
+        return;
+    }
+
+    list.innerHTML = items.map((item) => {
+        const candidateId = Number(item.id || 0);
+        const safeName = String(item.name || 'Unknown').replace(/"/g, '&quot;');
+        return `
+            <div class="head-option" data-user-id="${candidateId}">
+                <input type="radio" name="head_id" value="${candidateId}" id="head_${candidateId}">
+                <label for="head_${candidateId}">
+                    <span class="head-name">${safeName}</span>
+                    <span class="head-email">${item.email || '--'}</span>
+                </label>
+            </div>
+        `;
+    }).join('');
+}
+
 function setupEventListeners() {
+    document.body.addEventListener('click', function(e) {
+        const editBtn = e.target.closest('.edit-dept');
+        if (editBtn) {
+            e.preventDefault();
+            editDepartment(editBtn.dataset.deptId);
+        }
+
+        const assignBtn = e.target.closest('.assign-head');
+        if (assignBtn) {
+            e.preventDefault();
+            openAssignHeadModal(assignBtn.dataset.deptId);
+        }
+
+        const deleteBtn = e.target.closest('.delete-dept');
+        if (deleteBtn) {
+            e.preventDefault();
+            confirmDeleteDepartment(deleteBtn.dataset.deptId);
+        }
+    });
+
     // Add Department Button
     document.getElementById('addDepartmentBtn')?.addEventListener('click', openDepartmentModal);
 
@@ -68,16 +220,17 @@ function setupEventListeners() {
     }
 
     // Update search input when an option is selected
-    document.querySelectorAll('.head-option input[type="radio"]').forEach(radio => {
-        radio.addEventListener('change', function() {
-            if (this.checked && headSearch) {
-                const nameSpan = this.nextElementSibling.querySelector('.head-name');
-                if (nameSpan) {
-                    headSearch.value = nameSpan.textContent;
-                }
-                if (headList) headList.style.display = 'none';
-            }
-        });
+    headList?.addEventListener('change', function(e) {
+        const radio = e.target;
+        if (!(radio instanceof HTMLInputElement) || radio.type !== 'radio') return;
+        if (!radio.checked || !headSearch) return;
+
+        const label = headList.querySelector(`label[for="${radio.id}"]`);
+        const nameSpan = label?.querySelector('.head-name');
+        if (nameSpan) {
+            headSearch.value = nameSpan.textContent;
+        }
+        headList.style.display = 'none';
     });
 
     // Confirm Modal Button
@@ -145,10 +298,9 @@ async function editDepartment(deptId) {
         document.getElementById('deptModalTitle').textContent = 'Edit Department';
         document.getElementById('deptId').value = deptId;
         document.getElementById('deptName').value = data.name;
-        document.getElementById('deptCollege').value = data.college || '';
-        if (document.getElementById('deptHead')) {
-            document.getElementById('deptHead').value = data.head_id || '';
-        }
+        document.getElementById('deptEmail').value = data.email || '';
+        document.getElementById('deptLocation').value = data.location || '';
+        document.getElementById('deptBudget').value = data.budget ?? '';
 
         document.getElementById('departmentModal').classList.add('show');
     } catch (error) {
@@ -183,7 +335,7 @@ function searchHeads(e) {
     if (headList) headList.style.display = 'block';
     
     document.querySelectorAll('.head-option').forEach(option => {
-        const text = option.textContent.toLowerCase();
+        const text = (option.textContent || '').toLowerCase();
         option.style.display = text.includes(searchTerm) ? '' : 'none';
     });
 }
@@ -216,7 +368,7 @@ async function handleDepartmentFormSubmit(e) {
 async function handleAssignHeadSubmit(e) {
     e.preventDefault();
     const deptId = document.getElementById('assignHeadDeptId').value;
-    const headId = document.querySelector('input[name="head"]:checked')?.value;
+    const headId = document.querySelector('input[name="head_id"]:checked')?.value;
 
     if (!headId) {
         showAlert('Please select a department head!', 'danger');
@@ -225,9 +377,8 @@ async function handleAssignHeadSubmit(e) {
 
     const formData = new FormData();
     formData.append('head', headId);
-    const card = document.querySelector(`.department-card[data-dept-id="${deptId}"]`);
-    const deptName = card.querySelector('h3').textContent;
-    formData.append('name', deptName);
+    const deptInfo = departmentsData.find((item) => Number(item.id) === Number(deptId));
+    formData.append('name', deptInfo ? deptInfo.name : '');
 
     try {
         const response = await fetch(`/accounts/edit-department/${deptId}/`, {

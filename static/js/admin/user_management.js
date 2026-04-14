@@ -5,16 +5,127 @@
 let currentEditingUserId = null;
 let selectedUsers = [];
 let confirmedAction = null; // To store the action for the confirm modal
+let userDirectory = [];
+let departmentDirectory = [];
 
 document.addEventListener('DOMContentLoaded', function() {
     initializeUserManagement();
 });
 
 function initializeUserManagement() {
+    loadUserManagementData();
     setupEventListeners();
     setupFilterListeners();
-    setupTableCheckboxes();
     updateSelectedUsers(); // Initialize bulk actions visibility
+}
+
+async function loadUserManagementData() {
+    try {
+        const [usersResponse, departmentsResponse] = await Promise.all([
+            fetch('/accounts/users'),
+            fetch('/accounts/departments'),
+        ]);
+
+        const usersPayload = usersResponse.ok ? await usersResponse.json() : { items: [] };
+        const departmentsPayload = departmentsResponse.ok ? await departmentsResponse.json() : { items: [] };
+
+        userDirectory = Array.isArray(usersPayload.items) ? usersPayload.items : [];
+        departmentDirectory = Array.isArray(departmentsPayload.items) ? departmentsPayload.items : [];
+
+        renderUserRows(userDirectory);
+        populateDepartmentOptions();
+        setupTableCheckboxes();
+        updateSelectedUsers();
+    } catch (error) {
+        userDirectory = [];
+        renderUserRows([]);
+    }
+}
+
+function roleBadgeClass(role) {
+    if (role === 'admin') return 'role-admin';
+    if (role === 'department_head') return 'role-head';
+    if (role === 'employee') return 'role-employee';
+    return 'role-hr';
+}
+
+function formatDisplayDate(isoString) {
+    if (!isoString) return '--';
+    const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) return '--';
+    return date.toLocaleDateString(undefined, { month: 'short', day: '2-digit', year: 'numeric' });
+}
+
+function renderUserRows(items) {
+    const tableBody = document.getElementById('usersTableBody');
+    if (!tableBody) return;
+
+    if (!items.length) {
+        tableBody.innerHTML = `
+            <tr>
+                <td colspan="9" style="text-align:center; padding:20px;">No users found.</td>
+            </tr>
+        `;
+        return;
+    }
+
+    tableBody.innerHTML = items.map((item) => {
+        const userId = Number(item.id || 0);
+        const role = String(item.role || 'employee');
+        const roleLabel = String(item.roleLabel || role.replace(/_/g, ' '));
+        const department = String(item.department || 'Unassigned');
+        const statusClass = item.isActive ? 'active' : 'inactive';
+        const statusLabel = item.isActive ? 'Active' : 'Inactive';
+        const fullName = String(item.name || 'Unknown User');
+        const escapedName = fullName.replace(/"/g, '&quot;');
+        return `
+            <tr class="user-row" data-user-id="${userId}" data-role="${role}" data-status="${statusClass}" data-department-id="${item.departmentId || ''}" data-search="${(fullName + ' ' + (item.email || '') + ' ' + (item.employeeNo || userId)).toLowerCase()}">
+                <td><input type="checkbox" class="user-checkbox"></td>
+                <td>#${userId}</td>
+                <td>
+                    <div class="user-cell">
+                        <img src="../../static/img/sample-profile-pic.jfif" alt="${escapedName}" class="user-avatar">
+                        <span>${fullName}</span>
+                    </div>
+                </td>
+                <td>${item.email || '--'}</td>
+                <td><span class="role-badge ${roleBadgeClass(role)}">${roleLabel}</span></td>
+                <td>${department}</td>
+                <td><span class="status-badge ${statusClass}">${statusLabel}</span></td>
+                <td>${formatDisplayDate(item.createdAt)}</td>
+                <td class="action-cell">
+                    <button class="action-btn" onclick="toggleDropdown(this)">
+                        <i class="fas fa-ellipsis-v"></i>
+                    </button>
+                    <div class="dropdown-menu">
+                        <a href="#" class="dropdown-item edit-user" data-user-id="${userId}"><i class="fas fa-edit"></i> Edit</a>
+                        <a href="#" class="dropdown-item assign-role" data-user-id="${userId}" data-user-name="${escapedName}" data-current-role="${role}" data-current-department="${item.departmentId || ''}"><i class="fas fa-user-tie"></i> Assign Role</a>
+                        <a href="#" class="dropdown-item reset-password" data-user-id="${userId}" data-user-name="${escapedName}"><i class="fas fa-key"></i> Reset Password</a>
+                        <hr>
+                        <a href="#" class="dropdown-item delete-user" data-user-id="${userId}"><i class="fas fa-trash"></i> Delete</a>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function populateDepartmentOptions() {
+    const departmentFilter = document.getElementById('departmentFilter');
+    const newDepartment = document.getElementById('newDepartment');
+
+    const options = departmentDirectory
+        .filter((item) => item.isActive)
+        .map((item) => `<option value="${item.id}">${item.name}</option>`)
+        .join('');
+
+    if (departmentFilter) {
+        departmentFilter.innerHTML = `<option value="">All Departments</option>${options}`;
+    }
+
+    if (newDepartment) {
+        newDepartment.innerHTML = `<option value="">Select Department</option>${options}`;
+    }
 }
 
 function setupEventListeners() {
@@ -25,6 +136,47 @@ function setupEventListeners() {
         if (createBtn) {
             e.preventDefault();
             openUserModal();
+        }
+
+        const editBtn = e.target.closest('.edit-user');
+        if (editBtn) {
+            e.preventDefault();
+            editUser(editBtn.dataset.userId);
+        }
+
+        const assignBtn = e.target.closest('.assign-role');
+        if (assignBtn) {
+            e.preventDefault();
+            openAssignRoleModal(
+                assignBtn.dataset.userId,
+                assignBtn.dataset.userName,
+                assignBtn.dataset.currentRole,
+                assignBtn.dataset.currentDepartment
+            );
+        }
+
+        const resetBtn = e.target.closest('.reset-password');
+        if (resetBtn) {
+            e.preventDefault();
+            openResetPasswordModal(resetBtn.dataset.userId, resetBtn.dataset.userName);
+        }
+
+        const deleteBtn = e.target.closest('.delete-user');
+        if (deleteBtn) {
+            e.preventDefault();
+            confirmDeleteUser(deleteBtn.dataset.userId);
+        }
+
+        const lockBtn = e.target.closest('.lock-user');
+        if (lockBtn) {
+            e.preventDefault();
+            confirmUserStatusChange(lockBtn.dataset.userId, 'lock');
+        }
+
+        const unlockBtn = e.target.closest('.unlock-user');
+        if (unlockBtn) {
+            e.preventDefault();
+            confirmUserStatusChange(unlockBtn.dataset.userId, 'unlock');
         }
     });
 
@@ -246,7 +398,9 @@ async function editUser(userId) {
         if (document.getElementById('lastName')) document.getElementById('lastName').value = userData.last_name || '';
         if (document.getElementById('email')) document.getElementById('email').value = userData.email || '';
         if (document.getElementById('username')) document.getElementById('username').value = userData.username || '';
-        if (document.getElementById('role')) document.getElementById('role').value = userData.role || '';
+        const roleValue = String(userData.role || '');
+        const roleForUi = roleValue === 'department_head' ? 'head' : (roleValue.startsWith('hr_') ? 'hr' : roleValue);
+        if (document.getElementById('role')) document.getElementById('role').value = roleForUi || '';
         if (document.getElementById('userIdForEdit')) document.getElementById('userIdForEdit').value = userId;
 
         // Password fields are not required for edit unless explicitly changing
@@ -264,7 +418,7 @@ async function editUser(userId) {
 
         // Handle department for HEAD role
         const deptGroup = document.getElementById('departmentSelectGroupUserModal');
-        if (userData.role === 'HEAD') {
+        if (String(userData.role || '').toLowerCase() === 'head') {
             deptGroup.style.display = 'block';
             document.getElementById('departmentUserModal').required = true;
             document.getElementById('departmentUserModal').value = userData.department_id || '';
@@ -287,10 +441,12 @@ function openAssignRoleModal(userId, userName, currentRole, currentDepartment) {
     
     document.getElementById('assignRoleUserId').value = userId;
     document.getElementById('userNameDisplay').textContent = `User: ${userName}`;
-    document.getElementById('newRole').value = currentRole;
+    const roleValue = String(currentRole || '');
+    const roleForUi = roleValue === 'department_head' ? 'head' : (roleValue.startsWith('hr_') ? 'hr' : roleValue);
+    document.getElementById('newRole').value = roleForUi;
 
     const deptGroup = document.getElementById('departmentSelectGroup');
-    if (currentRole === 'HEAD') {
+    if ((currentRole || '').toLowerCase() === 'head' || (currentRole || '').toLowerCase() === 'department_head') {
         deptGroup.style.display = 'block';
         document.getElementById('newDepartment').required = true;
         document.getElementById('newDepartment').value = currentDepartment || '';
@@ -543,22 +699,41 @@ function updatePasswordStrengthDisplay(password, indicator) {
 }
 
 function applyFilters() {
-    const searchTerm = document.getElementById('userSearch').value;
+    const searchTerm = (document.getElementById('userSearch').value || '').trim().toLowerCase();
     const roleFilter = document.getElementById('roleFilter').value;
     const statusFilter = document.getElementById('statusFilter').value;
     const departmentFilter = document.getElementById('departmentFilter').value;
 
-    const url = new URL(window.location.href);
-    url.searchParams.set('search', searchTerm);
-    url.searchParams.set('role', roleFilter);
-    url.searchParams.set('status', statusFilter);
-    url.searchParams.set('department', departmentFilter);
-    
-    window.location.href = url.toString(); // Reload page with filters
+    document.querySelectorAll('.user-row').forEach((row) => {
+        const rowSearch = row.dataset.search || '';
+        const rowRole = row.dataset.role || '';
+        const rowStatus = row.dataset.status || '';
+        const rowDepartmentId = row.dataset.departmentId || '';
+
+        const searchOk = !searchTerm || rowSearch.includes(searchTerm);
+        const roleOk = !roleFilter
+            || rowRole === roleFilter
+            || (roleFilter === 'hr' && ['hr_head', 'hr_evaluator'].includes(rowRole))
+            || (roleFilter === 'head' && rowRole === 'department_head');
+        const statusOk = !statusFilter || rowStatus === statusFilter;
+        const deptOk = !departmentFilter || rowDepartmentId === departmentFilter;
+
+        row.style.display = searchOk && roleOk && statusOk && deptOk ? '' : 'none';
+    });
 }
 
 function clearFilters() {
-    window.location.href = window.location.pathname; // Reload page without filters
+    const userSearch = document.getElementById('userSearch');
+    const roleFilter = document.getElementById('roleFilter');
+    const statusFilter = document.getElementById('statusFilter');
+    const departmentFilter = document.getElementById('departmentFilter');
+
+    if (userSearch) userSearch.value = '';
+    if (roleFilter) roleFilter.value = '';
+    if (statusFilter) statusFilter.value = '';
+    if (departmentFilter) departmentFilter.value = '';
+
+    applyFilters();
 }
 
 function confirmUserStatusChange(userId, action) {

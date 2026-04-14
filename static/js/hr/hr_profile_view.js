@@ -1,161 +1,77 @@
-document.addEventListener('DOMContentLoaded', () => {
-    // --- SIDEBAR ELEMENTS ---
+function setupProfileViewPage() {
     const sidebar = document.getElementById('sidebar');
     const logoToggle = document.getElementById('logoToggle');
     const closeBtn = document.getElementById('closeBtn');
     const menuItems = document.querySelectorAll('.menu-item');
 
-    // --- SIDEBAR TOGGLE & GLIDE LOGIC ---
-    if (logoToggle) {
-        logoToggle.addEventListener('click', () => sidebar.classList.toggle('close'));
-    }
-    if (closeBtn) {
-        closeBtn.addEventListener('click', () => sidebar.classList.add('close'));
-    }
+    if (sidebar && logoToggle) logoToggle.addEventListener('click', () => sidebar.classList.toggle('close'));
+    if (sidebar && closeBtn) closeBtn.addEventListener('click', () => sidebar.classList.add('close'));
 
-    // --- AUTOMATIC TOOLTIP LABELS ---
-    // This pulls text from the span and puts it into data-text for the CSS tooltip
-    menuItems.forEach(item => {
+    menuItems.forEach((item) => {
         const span = item.querySelector('span');
-        if (span) {
-            item.setAttribute('data-text', span.innerText);
-        }
+        if (span) item.setAttribute('data-text', span.innerText);
     });
 
-    // --- TAB SWITCHING LOGIC ---
     const tabs = document.querySelectorAll('.tab');
     const tabContents = document.querySelectorAll('.tab-content-item');
-
-    tabs.forEach(tab => {
+    tabs.forEach((tab) => {
         tab.addEventListener('click', () => {
-            tabs.forEach(t => t.classList.remove('active'));
+            tabs.forEach((t) => t.classList.remove('active'));
             tab.classList.add('active');
-
-            tabContents.forEach(content => content.classList.remove('active'));
+            tabContents.forEach((content) => content.classList.remove('active'));
 
             const target = tab.getAttribute('data-tab');
-            document.getElementById(target).classList.add('active');
+            const targetEl = document.getElementById(target);
+            if (targetEl) targetEl.classList.add('active');
         });
     });
+}
 
-    // --- FILE UPLOAD & STATUS CHANGE LOGIC ---
-    const uploaders = document.querySelectorAll('.file-uploader');
-
-    uploaders.forEach(uploader => {
-        uploader.addEventListener('change', function() {
-            if (this.files && this.files[0]) {
-                const file = this.files[0];
-                const row = this.closest('tr');
-                
-                const statusCell = row.querySelector('.status-cell');
-                const dateCell = row.querySelector('.date-cell');
-                const actionCell = row.querySelector('.action-cell');
-
-                statusCell.textContent = "Valid";
-                statusCell.style.color = "#28a745";
-
-                const today = new Date().toLocaleDateString('en-US', { 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric' 
-                });
-                dateCell.textContent = today;
-
-                const fileURL = URL.createObjectURL(file);
-
-                actionCell.innerHTML = `
-                    <a href="${fileURL}" target="_blank" title="View Document">
-                        <i class="fas fa-eye"></i>
-                    </a>
-                    <a href="${fileURL}" download="${file.name}" title="Download Document">
-                        <i class="fas fa-download"></i>
-                    </a>
-                `;
-            }
-        });
-    });
-
-    // --- HISTORY MODAL LOGIC ---
-    const modal = document.getElementById('historyModal');
-    const openBtn = document.getElementById('openHistoryModal');
-    const closeBtnModal = document.getElementById('closeHistoryModal');
-    const saveBtn = document.getElementById('saveEventBtn');
-
-    // Open Modal
-    if (openBtn) {
-        openBtn.addEventListener('click', () => {
-            modal.style.display = "block";
-        });
-    }
-
-    // Close Modal via 'X'
-    if (closeBtnModal) {
-        closeBtnModal.addEventListener('click', () => {
-            modal.style.display = "none";
-        });
-    }
-
-    // Close Modal by clicking outside the box
-    window.addEventListener('click', (event) => {
-        if (event.target == modal) {
-            modal.style.display = "none";
+function setInfoRowValue(labelNeedle, value) {
+    const rows = document.querySelectorAll('.info-row');
+    rows.forEach((row) => {
+        const spans = row.querySelectorAll('span');
+        if (spans.length < 2) return;
+        if ((spans[0].textContent || '').toLowerCase().includes(labelNeedle.toLowerCase())) {
+            spans[1].textContent = value || '--';
         }
     });
+}
 
-    // Save Event Logic
-    if (saveBtn) {
-        saveBtn.addEventListener('click', () => {
-            const dateVal = document.getElementById('eventDate').value;
-            const titleVal = document.getElementById('eventTitle').value;
-            const descVal = document.getElementById('eventDesc').value;
+function applyProfileToView(profile) {
+    const nameEl = document.querySelector('.profile-info h2');
+    const roleEl = document.querySelector('.profile-info .role');
+    const employeeIdEl = document.querySelector('.profile-info .employee-id');
 
-            if (dateVal && titleVal && descVal) {
-                const timeline = document.getElementById('timelineContainer');
-                
-                const newItem = document.createElement('div');
-                newItem.classList.add('timeline-item');
-                
-                newItem.innerHTML = `
-                    <div class="timeline-date">${dateVal}</div>
-                    <div class="timeline-content">
-                        <h4>${titleVal}</h4>
-                        <p>${descVal}</p>
-                    </div>
-                `;
+    if (nameEl) nameEl.textContent = profile.fullName || 'Employee';
+    if (roleEl) roleEl.textContent = profile.position || profile.roleLabel || 'Employee';
+    if (employeeIdEl) employeeIdEl.textContent = `Employee ID: ${profile.employeeNo || profile.id || '--'}`;
 
-                timeline.prepend(newItem);
+    const details = document.querySelectorAll('.employment-details p');
+    if (details[0]) details[0].innerHTML = `<strong>Status</strong> <span class="status-dot active-dot"></span> ${profile.isActive ? 'Active' : 'Inactive'}`;
+    if (details[1]) details[1].innerHTML = `<strong>Department:</strong> ${profile.department || '--'}`;
+    if (details[2]) details[2].innerHTML = `<strong>Employment Type:</strong> ${profile.employmentType || '--'}`;
+    if (details[3]) details[3].innerHTML = `<strong>Date Hired:</strong> ${profile.dateHired || '--'}`;
 
-                // Reset and Close
-                modal.style.display = "none";
-                document.getElementById('eventDate').value = "";
-                document.getElementById('eventTitle').value = "";
-                document.getElementById('eventDesc').value = "";
-            } else {
-                if (window.Swal && typeof window.Swal.fire === 'function') {
-                    window.Swal.fire({
-                        icon: 'warning',
-                        title: 'Missing fields',
-                        text: 'Please fill in all fields before saving.',
-                        confirmButtonColor: '#4a1d1d',
-                    });
-                } else {
-                    const toast = document.createElement('div');
-                    toast.style.position = 'fixed';
-                    toast.style.top = '20px';
-                    toast.style.right = '20px';
-                    toast.style.zIndex = '9999';
-                    toast.style.background = '#4a1d1d';
-                    toast.style.color = '#fff';
-                    toast.style.padding = '10px 14px';
-                    toast.style.borderRadius = '8px';
-                    toast.style.fontSize = '0.9rem';
-                    toast.textContent = 'Please fill in all fields before saving.';
-                    document.body.appendChild(toast);
-                    setTimeout(function () {
-                        toast.remove();
-                    }, 2200);
-                }
-            }
-        });
+    const contactLines = document.querySelectorAll('.contact-info p');
+    if (contactLines[0]) contactLines[0].innerHTML = `<i class="fas fa-envelope"></i> ${profile.email || '--'}`;
+    if (contactLines[1]) contactLines[1].innerHTML = `<i class="fas fa-phone"></i> ${profile.contactNumber || '--'}`;
+    if (contactLines[2]) contactLines[2].innerHTML = `<i class="fas fa-location-dot"></i> ${profile.address || '--'}`;
+
+    setInfoRowValue('Assigned Department', profile.department || '--');
+}
+
+async function loadProfileViewData() {
+    try {
+        const response = await fetch('/api/profile/me');
+        if (!response.ok) return;
+        const profile = await response.json();
+        applyProfileToView(profile);
+    } catch (error) {
     }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    setupProfileViewPage();
+    loadProfileViewData();
 });

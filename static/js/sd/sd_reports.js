@@ -9,6 +9,10 @@ document.addEventListener('DOMContentLoaded', function() {
     setupModalListeners();
 });
 
+let attendanceChartInstance = null;
+let statusChartInstance = null;
+let departmentChartInstance = null;
+
 function initializeDashboard() {
     // Initialize all charts
     initializeAttendanceChart();
@@ -403,14 +407,14 @@ function initializeAttendanceChart() {
     const ctx = document.getElementById('attendanceChart');
     if (!ctx) return;
     
-    new Chart(ctx, {
+    attendanceChartInstance = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+            labels: [],
             datasets: [
                 {
                     label: 'Attendance Rate (%)',
-                    data: [94, 96, 93, 97, 95, 92, 91],
+                    data: [],
                     borderColor: '#2563eb',
                     backgroundColor: 'rgba(37, 99, 235, 0.1)',
                     borderWidth: 2,
@@ -469,12 +473,12 @@ function initializeStatusChart() {
     const ctx = document.getElementById('statusChart');
     if (!ctx) return;
     
-    new Chart(ctx, {
+    statusChartInstance = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: ['Active', 'On Leave', 'Remote', 'Probation'],
+            labels: ['Active', 'On Leave', 'Inactive', 'Department Heads'],
             datasets: [{
-                data: [348, 62, 35, 5],
+                data: [0, 0, 0, 0],
                 backgroundColor: [
                     '#10b981',
                     '#f59e0b',
@@ -508,13 +512,13 @@ function initializeDepartmentChart() {
     const ctx = document.getElementById('departmentChart');
     if (!ctx) return;
     
-    new Chart(ctx, {
+    departmentChartInstance = new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: ['HR', 'IT', 'Finance', 'Operations', 'Sales'],
+            labels: [],
             datasets: [{
                 label: 'Number of Employees',
-                data: [65, 145, 78, 92, 70],
+                data: [],
                 backgroundColor: [
                     '#2563eb',
                     '#8b5cf6',
@@ -584,6 +588,7 @@ function updateChartsWithSchool(school) {
 
 function loadDashboardData() {
     loadKPIData();
+    loadChartData();
 }
 
 async function loadKPIData() {
@@ -608,6 +613,36 @@ async function loadKPIData() {
         if (attendanceRate) attendanceRate.textContent = '0.0%';
         if (turnoverRate) turnoverRate.textContent = '0.00%';
         if (avgPerformance) avgPerformance.textContent = '0.0/10';
+    }
+}
+
+async function loadChartData() {
+    try {
+        const response = await fetch('/api/reports/charts');
+        if (!response.ok) {
+            throw new Error('Failed to load chart data');
+        }
+
+        const payload = await response.json();
+
+        if (attendanceChartInstance && payload.attendanceTrend) {
+            attendanceChartInstance.data.labels = payload.attendanceTrend.labels || [];
+            attendanceChartInstance.data.datasets[0].data = payload.attendanceTrend.data || [];
+            attendanceChartInstance.update();
+        }
+
+        if (statusChartInstance && payload.statusBreakdown) {
+            statusChartInstance.data.labels = payload.statusBreakdown.labels || [];
+            statusChartInstance.data.datasets[0].data = payload.statusBreakdown.data || [];
+            statusChartInstance.update();
+        }
+
+        if (departmentChartInstance && payload.departmentDistribution) {
+            departmentChartInstance.data.labels = payload.departmentDistribution.labels || [];
+            departmentChartInstance.data.datasets[0].data = payload.departmentDistribution.data || [];
+            departmentChartInstance.update();
+        }
+    } catch (error) {
     }
 }
 

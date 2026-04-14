@@ -5,6 +5,10 @@ from sqlalchemy import Boolean, Column, Date, DateTime, Enum as SAEnum, ForeignK
 from database import Base
 
 
+def enum_values(enum_cls: type[Enum]) -> list[str]:
+    return [str(item.value) for item in enum_cls]
+
+
 class UserRole(str, Enum):
     admin = "admin"
     school_director = "school_director"
@@ -61,7 +65,11 @@ class LeaveRequest(Base):
     start_date = Column(Date, nullable=False)
     end_date = Column(Date, nullable=False)
     num_days = Column(Integer, nullable=False)
-    status = Column(SAEnum(LeaveStatus, name="leave_status"), nullable=False, default=LeaveStatus.pending)
+    status = Column(
+        SAEnum(LeaveStatus, name="leave_status", values_callable=enum_values),
+        nullable=False,
+        default=LeaveStatus.pending,
+    )
     reason = Column(Text, nullable=False)
     file_name = Column(String(255), nullable=True)
     reviewed_by_user_id = Column(Integer, nullable=True)
@@ -89,7 +97,11 @@ class PositionChangeRequest(Base):
     requested_position = Column(String(120), nullable=False)
     effective_date = Column(Date, nullable=False)
     reason = Column(Text, nullable=False)
-    status = Column(SAEnum(PositionChangeStatus, name="position_change_status"), nullable=False, default=PositionChangeStatus.pending)
+    status = Column(
+        SAEnum(PositionChangeStatus, name="position_change_status", values_callable=enum_values),
+        nullable=False,
+        default=PositionChangeStatus.pending,
+    )
     reviewed_by_user_id = Column(Integer, nullable=True)
     reviewed_by_name = Column(String(150), nullable=True)
     review_remarks = Column(Text, nullable=True)
@@ -118,7 +130,11 @@ class TrainingSession(Base):
     contact = Column(String(255), nullable=True)
     total_slots = Column(Integer, nullable=False, default=0)
     filled_slots = Column(Integer, nullable=False, default=0)
-    status = Column(SAEnum(TrainingStatus, name="training_status"), nullable=False, default=TrainingStatus.open)
+    status = Column(
+        SAEnum(TrainingStatus, name="training_status", values_callable=enum_values),
+        nullable=False,
+        default=TrainingStatus.open,
+    )
     remarks = Column(Text, nullable=True)
     created_by_user_id = Column(Integer, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
@@ -153,7 +169,11 @@ class AttendanceRecord(Base):
     time_in = Column(DateTime, nullable=True)
     time_out = Column(DateTime, nullable=True)
     worked_seconds = Column(Integer, nullable=False, default=0)
-    status = Column(SAEnum(AttendanceStatus, name="attendance_status"), nullable=False, default=AttendanceStatus.present)
+    status = Column(
+        SAEnum(AttendanceStatus, name="attendance_status", values_callable=enum_values),
+        nullable=False,
+        default=AttendanceStatus.present,
+    )
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())

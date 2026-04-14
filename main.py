@@ -1,5 +1,6 @@
 import os
 import csv
+from collections import defaultdict
 
 from io import StringIO
 
@@ -131,6 +132,56 @@ def split_name(full_name: str) -> tuple[str, str]:
     if len(parts) == 1:
         return parts[0], ""
     return parts[0], " ".join(parts[1:])
+
+
+def build_profile_payload(current_user: User, db: Session) -> dict[str, str | bool]:
+    latest_position = (
+        db.query(PositionChangeRequest)
+        .filter(PositionChangeRequest.requester_user_id == int(current_user.id))
+        .order_by(PositionChangeRequest.created_at.desc(), PositionChangeRequest.id.desc())
+        .first()
+    )
+
+    first_name, last_name = split_name(str(current_user.full_name))
+    role_label = str(current_user.role.value).replace("_", " ").title()
+
+    department_name = ""
+    position_name = ""
+
+    if latest_position:
+        department_name = str(latest_position.current_department or "")
+        position_name = str(latest_position.current_position or "")
+
+    if not department_name and current_user.role == UserRole.department_head:
+        head_department = db.query(Department).filter(Department.head_user_id == int(current_user.id), Department.is_active == True).first()
+        if head_department:
+            department_name = str(head_department.name)
+
+    if not department_name:
+        department_name = "General"
+
+    if not position_name:
+        position_name = role_label
+
+    return {
+        "id": int(current_user.id),
+        "employeeNo": str(current_user.employee_no or ""),
+        "fullName": str(current_user.full_name),
+        "firstName": first_name,
+        "lastName": last_name,
+        "email": str(current_user.email),
+        "role": str(current_user.role.value),
+        "roleLabel": role_label,
+        "department": department_name,
+        "position": position_name,
+        "isActive": bool(current_user.is_active),
+        "employmentType": "Full-time",
+        "dateHired": current_user.created_at.strftime("%B %d, %Y") if current_user.created_at else "",
+        "contactNumber": "",
+        "address": "",
+        "emergencyName": "",
+        "emergencyPhone": "",
+    }
 
 
 def parse_user_ids(raw_user_ids: list[str]) -> list[int]:
@@ -496,6 +547,39 @@ def logout() -> RedirectResponse:
 @app.get("/auth/me", response_model=UserRead)
 def read_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@app.get("/api/profile/me")
+def read_profile_me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return build_profile_payload(current_user, db)
+
+
+@app.post("/api/profile/me")
+async def update_profile_me(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    form = await request.form()
+
+    first_name = str(form.get("first_name") or form.get("firstName") or "").strip()
+    last_name = str(form.get("last_name") or form.get("lastName") or "").strip()
+    email = str(form.get("email") or current_user.email).strip().lower()
+
+    if first_name or last_name:
+        combined_name = f"{first_name} {last_name}".strip()
+        if combined_name:
+            current_user.full_name = combined_name
+
+    if email and email != str(current_user.email).lower():
+        existing = db.query(User).filter(User.email == email, User.id != int(current_user.id)).first()
+        if existing:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already in use")
+        current_user.email = email
+
+    db.commit()
+    db.refresh(current_user)
+    return {"message": "Profile updated successfully.", "profile": build_profile_payload(current_user, db)}
 
 
 @app.get("/roles")
@@ -1042,15 +1126,30 @@ async def decide_position_request(
 
 @app.get("/api/reports/kpi")
 def reports_kpi(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    total_employees = db.query(User).filter(User.role == UserRole.employee).count()
+    today = date.today()
+    total_employees = db.query(User).filter(User.role == UserRole.employee, User.is_active == True).count()
     approved_leaves = db.query(LeaveRequest).filter(LeaveRequest.status == LeaveStatus.approved).count()
     total_leaves = db.query(LeaveRequest).count()
     pending_position_changes = db.query(PositionChangeRequest).filter(PositionChangeRequest.status == PositionChangeStatus.pending).count()
     total_departments = db.query(Department).filter(Department.is_active == True).count()
 
-    attendance_rate = 94.5
-    turnover_rate = round((pending_position_changes / total_employees) * 100, 2) if total_employees else 0.0
-    avg_performance = round(7.5 + min(1.5, approved_leaves / 20), 1)
+    present_today = (
+        db.query(AttendanceRecord.user_id)
+        .filter(
+            AttendanceRecord.record_date == today,
+            AttendanceRecord.status.in_([AttendanceStatus.present, AttendanceStatus.late]),
+        )
+        .distinct()
+        .count()
+    )
+    attendance_rate = round((present_today / total_employees) * 100, 2) if total_employees else 0.0
+
+    approved_position_changes = db.query(PositionChangeRequest).filter(PositionChangeRequest.status == PositionChangeStatus.approved).count()
+    turnover_rate = round((approved_position_changes / total_employees) * 100, 2) if total_employees else 0.0
+
+    completed_trainings = db.query(TrainingSession).filter(TrainingSession.status == TrainingStatus.completed).count()
+    total_trainings = db.query(TrainingSession).count()
+    avg_performance = round((completed_trainings / total_trainings) * 10, 1) if total_trainings else 0.0
 
     return {
         "totalEmployees": total_employees,
@@ -1092,6 +1191,37 @@ def build_report_rows(report_type: str, school: str, db: Session) -> list[dict[s
     return rows[:100]
 
 
+def build_latest_position_map(db: Session) -> dict[int, PositionChangeRequest]:
+    requests = (
+        db.query(PositionChangeRequest)
+        .order_by(
+            PositionChangeRequest.requester_user_id.asc(),
+            PositionChangeRequest.created_at.desc(),
+            PositionChangeRequest.id.desc(),
+        )
+        .all()
+    )
+
+    latest_by_user: dict[int, PositionChangeRequest] = {}
+    for item in requests:
+        requester_id = int(item.requester_user_id)
+        if requester_id not in latest_by_user:
+            latest_by_user[requester_id] = item
+    return latest_by_user
+
+
+def build_department_employee_counts(
+    employees: list[User],
+    latest_position_by_user: dict[int, PositionChangeRequest],
+) -> dict[str, int]:
+    counts: dict[str, int] = defaultdict(int)
+    for employee in employees:
+        latest = latest_position_by_user.get(int(employee.id))
+        department_name = (latest.current_department if latest else None) or "Unassigned"
+        counts[str(department_name)] += 1
+    return counts
+
+
 def format_relative_time(value: datetime | None) -> str:
     if not value:
         return "Unknown"
@@ -1108,6 +1238,179 @@ def format_relative_time(value: datetime | None) -> str:
         return f"{hours} hour{'s' if hours != 1 else ''} ago"
     days = max(1, seconds // 86400)
     return f"{days} day{'s' if days != 1 else ''} ago"
+
+
+@app.get("/api/reports/charts")
+def reports_chart_data(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    today = date.today()
+    employees = db.query(User).filter(User.role == UserRole.employee, User.is_active == True).all()
+    total_employees = len(employees)
+    employee_ids = [int(item.id) for item in employees]
+
+    attendance_labels: list[str] = []
+    attendance_values: list[float] = []
+    for day_offset in range(6, -1, -1):
+        current_day = today - timedelta(days=day_offset)
+        attendance_labels.append(current_day.strftime("%a"))
+
+        if not employee_ids:
+            attendance_values.append(0.0)
+            continue
+
+        active_count = (
+            db.query(AttendanceRecord.user_id)
+            .filter(
+                AttendanceRecord.user_id.in_(employee_ids),
+                AttendanceRecord.record_date == current_day,
+                AttendanceRecord.status.in_([AttendanceStatus.present, AttendanceStatus.late]),
+            )
+            .distinct()
+            .count()
+        )
+        attendance_values.append(round((active_count / total_employees) * 100, 2) if total_employees else 0.0)
+
+    on_leave_count = (
+        db.query(LeaveRequest)
+        .filter(
+            LeaveRequest.status == LeaveStatus.approved,
+            LeaveRequest.start_date <= today,
+            LeaveRequest.end_date >= today,
+        )
+        .count()
+    )
+    inactive_employee_count = db.query(User).filter(User.role == UserRole.employee, User.is_active == False).count()
+    department_head_count = db.query(User).filter(User.role == UserRole.department_head, User.is_active == True).count()
+
+    latest_position_by_user = build_latest_position_map(db)
+    department_counts = build_department_employee_counts(employees, latest_position_by_user)
+    active_departments = db.query(Department).filter(Department.is_active == True).order_by(Department.name.asc()).all()
+
+    department_labels: list[str] = []
+    department_values: list[int] = []
+    for dept in active_departments:
+        department_labels.append(str(dept.name))
+        department_values.append(int(department_counts.get(str(dept.name), 0)))
+
+    if not department_labels:
+        department_labels = ["Unassigned"]
+        department_values = [int(department_counts.get("Unassigned", 0))]
+
+    return {
+        "attendanceTrend": {
+            "labels": attendance_labels,
+            "data": attendance_values,
+        },
+        "statusBreakdown": {
+            "labels": ["Active", "On Leave", "Inactive", "Department Heads"],
+            "data": [
+                max(total_employees - on_leave_count, 0),
+                int(on_leave_count),
+                int(inactive_employee_count),
+                int(department_head_count),
+            ],
+        },
+        "departmentDistribution": {
+            "labels": department_labels,
+            "data": department_values,
+        },
+    }
+
+
+@app.get("/accounts/users")
+def list_users_for_admin(current_user: User = Depends(require_roles(UserRole.admin)), db: Session = Depends(get_db)):
+    users = db.query(User).order_by(User.created_at.desc(), User.id.desc()).all()
+    departments = db.query(Department).filter(Department.is_active == True).all()
+    latest_position_by_user = build_latest_position_map(db)
+
+    department_name_to_id = {str(dept.name).lower(): int(dept.id) for dept in departments}
+    role_labels = {
+        UserRole.admin: "Admin",
+        UserRole.school_director: "School Director",
+        UserRole.hr_evaluator: "HR Evaluator",
+        UserRole.hr_head: "HR Head",
+        UserRole.department_head: "Department Head",
+        UserRole.employee: "Employee",
+    }
+
+    items = []
+    for user in users:
+        latest = latest_position_by_user.get(int(user.id))
+        department_name = (latest.current_department if latest else None) or "Unassigned"
+        department_id = department_name_to_id.get(str(department_name).lower())
+
+        items.append(
+            {
+                "id": int(user.id),
+                "employeeNo": str(user.employee_no or ""),
+                "name": str(user.full_name),
+                "email": str(user.email),
+                "role": str(user.role.value),
+                "roleLabel": role_labels.get(user.role, str(user.role.value).replace("_", " ").title()),
+                "isActive": bool(user.is_active),
+                "department": str(department_name),
+                "departmentId": int(department_id) if department_id is not None else None,
+                "createdAt": user.created_at.isoformat() if user.created_at else None,
+            }
+        )
+
+    return {"items": items}
+
+
+@app.get("/accounts/departments")
+def list_departments_for_admin(current_user: User = Depends(require_roles(UserRole.admin)), db: Session = Depends(get_db)):
+    departments = db.query(Department).order_by(Department.name.asc()).all()
+    employees = db.query(User).filter(User.role == UserRole.employee, User.is_active == True).all()
+    latest_position_by_user = build_latest_position_map(db)
+    department_counts = build_department_employee_counts(employees, latest_position_by_user)
+
+    head_user_ids = [int(dept.head_user_id) for dept in departments if dept.head_user_id]
+    head_lookup: dict[int, User] = {}
+    if head_user_ids:
+        heads = db.query(User).filter(User.id.in_(head_user_ids)).all()
+        for user in heads:
+            head_lookup[int(user.id)] = user
+
+    items = []
+    for dept in departments:
+        head_user = head_lookup.get(int(dept.head_user_id)) if dept.head_user_id else None
+        items.append(
+            {
+                "id": int(dept.id),
+                "name": str(dept.name),
+                "email": str(dept.email or ""),
+                "location": str(dept.location or ""),
+                "budget": float(dept.budget) if dept.budget is not None else None,
+                "isActive": bool(dept.is_active),
+                "createdAt": dept.created_at.isoformat() if dept.created_at else None,
+                "headId": int(dept.head_user_id) if dept.head_user_id else None,
+                "headName": str(head_user.full_name) if head_user else None,
+                "employeeCount": int(department_counts.get(str(dept.name), 0)),
+            }
+        )
+
+    return {"items": items}
+
+
+@app.get("/accounts/department-head-candidates")
+def list_department_head_candidates(current_user: User = Depends(require_roles(UserRole.admin)), db: Session = Depends(get_db)):
+    users = (
+        db.query(User)
+        .filter(User.is_active == True)
+        .filter(User.role != UserRole.employee)
+        .order_by(User.full_name.asc())
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "id": int(user.id),
+                "name": str(user.full_name),
+                "email": str(user.email),
+                "role": str(user.role.value),
+            }
+            for user in users
+        ]
+    }
 
 
 @app.get("/api/dashboard/notifications")
@@ -1262,6 +1565,58 @@ def admin_dashboard_analytics(
             "data": values,
         },
     }
+
+
+@app.get("/api/admin/recent-activity")
+def admin_recent_activity(
+    current_user: User = Depends(require_roles(UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    items: list[dict[str, object]] = []
+
+    recent_users = db.query(User).order_by(User.created_at.desc()).limit(3).all()
+    for user in recent_users:
+        items.append(
+            {
+                "icon": "user-plus",
+                "action": f"User account created: {user.full_name}",
+                "actor": "System",
+                "time": format_relative_time(user.created_at),
+                "_sort": user.created_at,
+            }
+        )
+
+    recent_leaves = db.query(LeaveRequest).order_by(LeaveRequest.updated_at.desc()).limit(3).all()
+    for leave in recent_leaves:
+        updated_at = leave.updated_at or leave.created_at
+        items.append(
+            {
+                "icon": "calendar-check",
+                "action": f"Leave request {leave.status.value.lower()}: {leave.requester_name}",
+                "actor": leave.reviewed_by_name or "System",
+                "time": format_relative_time(updated_at),
+                "_sort": updated_at,
+            }
+        )
+
+    recent_positions = db.query(PositionChangeRequest).order_by(PositionChangeRequest.updated_at.desc()).limit(3).all()
+    for request in recent_positions:
+        updated_at = request.updated_at or request.created_at
+        items.append(
+            {
+                "icon": "user-tie",
+                "action": f"Position request {request.status.value.lower()}: {request.employee_name}",
+                "actor": request.reviewed_by_name or "System",
+                "time": format_relative_time(updated_at),
+                "_sort": updated_at,
+            }
+        )
+
+    items.sort(key=lambda x: x.get("_sort") or datetime.min, reverse=True)
+    trimmed = items[:8]
+    for item in trimmed:
+        item.pop("_sort", None)
+    return {"items": trimmed}
 
 
 @app.get("/api/trainings")

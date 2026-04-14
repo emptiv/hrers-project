@@ -23,6 +23,8 @@ document.addEventListener('DOMContentLoaded', function() {
     loadDailyQuote();
 });
 
+let attendanceChartInstance = null;
+
 function initializeDashboard() {
     // Initialize charts
     initializeAttendanceChart();
@@ -177,45 +179,27 @@ async function loadDashboardNotifications() {
 function initializeAttendanceChart() {
     const ctx = document.getElementById('attendanceChart');
     if (!ctx) return;
-    
-    // Get last 7 days
-    const labels = getLast7Days();
-    
-    const data = {
-        labels: labels,
-        datasets: [
-            {
-                label: 'Present',
-                data: [420, 415, 425, 428, 420, 422, 428],
-                backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                borderColor: '#10b981',
-                borderWidth: 2,
-                fill: true,
-                tension: 0.4,
-                pointBackgroundColor: '#10b981',
-                pointBorderColor: '#fff',
-                pointBorderWidth: 2,
-                pointRadius: 5
-            },
-            {
-                label: 'Absent',
-                data: [30, 35, 25, 22, 30, 28, 22],
-                backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                borderColor: '#ef4444',
-                borderWidth: 2,
-                fill: true,
-                tension: 0.4,
-                pointBackgroundColor: '#ef4444',
-                pointBorderColor: '#fff',
-                pointBorderWidth: 2,
-                pointRadius: 5
-            }
-        ]
-    };
-    
-    new Chart(ctx, {
+
+    attendanceChartInstance = new Chart(ctx, {
         type: 'line',
-        data: data,
+        data: {
+            labels: getLast7Days(),
+            datasets: [
+                {
+                    label: 'Attendance Rate (%)',
+                    data: [],
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    borderColor: '#10b981',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4,
+                    pointBackgroundColor: '#10b981',
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2,
+                    pointRadius: 5
+                }
+            ]
+        },
         options: {
             responsive: true,
             maintainAspectRatio: true,
@@ -234,7 +218,7 @@ function initializeAttendanceChart() {
             scales: {
                 y: {
                     beginAtZero: true,
-                    max: 450,
+                    max: 100,
                     grid: {
                         color: 'rgba(0, 0, 0, 0.05)'
                     },
@@ -310,15 +294,30 @@ async function loadDashboardData() {
     const activeEmployeesEl = document.getElementById('activeEmployees');
     const onLeaveEl = document.getElementById('onLeave');
 
-    let totalEmployees = 450;
-    let onLeaveCount = 22;
+    let totalEmployees = 0;
+    let onLeaveCount = 0;
 
     try {
-        const response = await fetch('/api/reports/kpi');
-        if (response.ok) {
-            const payload = await response.json();
+        const [kpiResponse, chartResponse] = await Promise.all([
+            fetch('/api/reports/kpi'),
+            fetch('/api/reports/charts'),
+        ]);
+
+        if (kpiResponse.ok) {
+            const payload = await kpiResponse.json();
             totalEmployees = Number(payload.totalEmployees || totalEmployees);
-            onLeaveCount = Number((payload.summary && payload.summary.totalLeaves) || onLeaveCount);
+        }
+
+        if (chartResponse.ok) {
+            const chartPayload = await chartResponse.json();
+            const statusData = (chartPayload.statusBreakdown && chartPayload.statusBreakdown.data) || [];
+            onLeaveCount = Number(statusData[1] || onLeaveCount);
+
+            if (attendanceChartInstance && chartPayload.attendanceTrend) {
+                attendanceChartInstance.data.labels = chartPayload.attendanceTrend.labels || getLast7Days();
+                attendanceChartInstance.data.datasets[0].data = chartPayload.attendanceTrend.data || [];
+                attendanceChartInstance.update();
+            }
         }
     } catch (error) {
     }

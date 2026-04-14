@@ -218,8 +218,8 @@
                     <div class="user-cell">\\
                         <div class="avatar"><i class="fas fa-user"></i></div>\\
                         <div class="user-info">\\
-                            <span class="name">' + (item.name || 'N/A') + '</span>\\
-                            <span class="title">' + (item.title || 'Employee') + '</span>\\
+                            <span class="name">' + (item.name || '--') + '</span>\
+                            <span class="title">' + (item.title || 'Employee') + '</span>\
                             <span class="dept-badge">' + (item.department || 'General') + '</span>\\
                         </div>\\
                     </div>\\

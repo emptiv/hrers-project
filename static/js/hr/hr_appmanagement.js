@@ -13,7 +13,6 @@ let activeMainTab = 'new';
 
 let appData = [];
 let positionChangeData = [];
-const employeeDirectory = {};
 
 function mapStatusForHr(status) {
     if (status === 'approved' || status === 'rejected') {
@@ -28,11 +27,11 @@ function mapLeaveToApp(item) {
         id: 'LR-' + item.id,
         sourceType: 'leave',
         sourceId: item.id,
-        name: item.name || 'N/A',
-        email: 'N/A',
-        phoneNumber: 'N/A',
-        dept: (item.role || 'N/A').replace(/_/g, ' '),
-        applyingTo: (item.role || 'N/A').replace(/_/g, ' '),
+        name: item.name || '--',
+        email: '--',
+        phoneNumber: '--',
+        dept: (item.role || '').replace(/_/g, ' ') || '--',
+        applyingTo: (item.role || '').replace(/_/g, ' ') || '--',
         position: item.leaveType || 'Leave Request',
         applyingFor: item.leaveType || 'Leave Request',
         submitted: item.dateFiled || '---',
@@ -57,12 +56,12 @@ function mapPositionToApp(item) {
         id: 'PCR-' + item.id,
         sourceType: 'position',
         sourceId: item.id,
-        name: item.employeeName || 'N/A',
-        empId: item.employeeId || 'N/A',
-        dept: item.currentDepartment || 'N/A',
-        position: item.currentPosition || 'N/A',
-        requestedPos: item.requestedPosition || 'N/A',
-        reason: item.reason || 'N/A',
+        name: item.employeeName || '--',
+        empId: item.employeeId || '--',
+        dept: item.currentDepartment || '--',
+        position: item.currentPosition || '--',
+        requestedPos: item.requestedPosition || '--',
+        reason: item.reason || '--',
         submitted: item.submittedAt ? new Date(item.submittedAt).toLocaleDateString() : '---',
         progress: normalizedStatus === 'pending-hr' ? 'In Review' : 'Completed',
         status: normalizedStatus,
@@ -131,7 +130,6 @@ function resetPositionForm() {
 
 async function autoFillEmployee(name) {
     const key    = name.trim().toLowerCase();
-    const fallbackEmp = employeeDirectory[key];
     const idEl   = document.getElementById('pcEmpId');
     const posEl  = document.getElementById('pcCurrentPos');
     const deptEl = document.getElementById('pcDept');
@@ -158,15 +156,9 @@ async function autoFillEmployee(name) {
     } catch (error) {
     }
 
-    if (fallbackEmp) {
-        idEl.value   = fallbackEmp.id;
-        posEl.value  = fallbackEmp.position;
-        deptEl.value = fallbackEmp.dept;
-    } else {
-        idEl.value   = '';
-        posEl.value  = '';
-        deptEl.value = '';
-    }
+    idEl.value   = '';
+    posEl.value  = '';
+    deptEl.value = '';
 }
 
 function generatePCRId() {
@@ -810,8 +802,8 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
-        var currentPos = document.getElementById('pcCurrentPos').value.trim() || 'N/A';
-        var dept       = document.getElementById('pcDept').value.trim()       || 'N/A';
+        var currentPos = document.getElementById('pcCurrentPos').value.trim() || '';
+        var dept       = document.getElementById('pcDept').value.trim()       || '';
 
         var payload = new FormData();
         payload.append('employee_name', empName);
