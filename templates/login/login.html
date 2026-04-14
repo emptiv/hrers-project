@@ -12,22 +12,24 @@
         <div class="left">
             <img src="/static/img/general/uph.png" alt="UPHSD logo" class="logo" width="250" height="250">
             
-            <form method="post" action="#">
+            <form id="loginForm" method="post" action="/auth/login">
 
                 <input type="text" name="username" placeholder="Username/Email" required>
                 <input type="password" name="password" placeholder="Password" required>
                 
                 <div class="remember-forgot">
                     <label><input type="checkbox" name="remember_me"> Remember me</label>
-                    <a href="forpass.html">Forgot your password?</a>
+                    <a href="/forgot-password">Forgot your password?</a>
                 </div>
                 <button type="submit">Login</button>
             </form>
+            <p id="loginMessage" style="display:none;"></p>
         </div>
         <div class="right-wrapper">
             <div class="right"></div>
         </div>
     </div>
 
+    <script src="/static/js/login/login.js"></script>
     </body>
 </html>

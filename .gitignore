@@ -1,0 +1,9 @@
+venv/
+
+notes/
+
+__pycache__/
+
+.webui_secret_key
+
+.env

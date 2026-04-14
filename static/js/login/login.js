@@ -1,30 +1,60 @@
-/* document.addEventListener('DOMContentLoaded', () => {
-    const loginForm = document.querySelector('form');
-    
-    loginForm.addEventListener('submit', (e) => {
+document.addEventListener("DOMContentLoaded", function () {
+    const loginForm = document.getElementById("loginForm");
+    const loginMessage = document.getElementById("loginMessage");
+    const roleRedirectMap = {
+        admin: "/dashboard/admin",
+        school_director: "/dashboard/school-director",
+        hr_evaluator: "/dashboard/hr",
+        hr_head: "/dashboard/hr",
+        department_head: "/dashboard/department-head",
+        employee: "/dashboard/employee",
+    };
 
-        e.preventDefault();
+    if (!loginForm || !loginMessage) {
+        return;
+    }
 
-        // 2. Select the elements
-        const emailInput = document.querySelector('input[type="text"]');
-        const passwordInput = document.querySelector('input[type="password"]');
-        const rememberMe = document.querySelector('input[type="checkbox"]');
+    function showMessage(text, color) {
+        loginMessage.textContent = text;
+        loginMessage.style.display = "block";
+        loginMessage.style.color = color;
+    }
 
-        // 3. Get the values
-        const email = emailInput.value;
-        const password = passwordInput.value;
-        const isRemembered = rememberMe.checked ? "Yes" : "No";
+    loginForm.addEventListener("submit", async function (event) {
+        event.preventDefault();
 
-        // 4. Trigger the alert
-        alert(
-            `Login Attempt Details:\n` +
-            `------------------------\n` +
-            `Email/Username: ${email}\n` +
-            `Password: ${password}\n` +
-            `Remember Me: ${isRemembered}`
-        );
+        const formData = new FormData(loginForm);
+        const body = new URLSearchParams();
+        body.set("username", formData.get("username"));
+        body.set("password", formData.get("password"));
 
-        passwordInput.value = '';
+        try {
+            const response = await fetch("/auth/login", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body: body.toString(),
+            });
+
+            const payload = await response.json();
+
+            if (!response.ok) {
+                showMessage(payload.detail || "Login failed.", "crimson");
+                return;
+            }
+
+            localStorage.setItem("hrers_access_token", payload.access_token);
+            localStorage.setItem("hrers_role", payload.role);
+            showMessage("Login successful.", "green");
+
+            const redirectTarget = roleRedirectMap[payload.role] || "/health";
+
+            setTimeout(function () {
+                window.location.href = redirectTarget;
+            }, 500);
+        } catch (error) {
+            showMessage("Unable to reach the server.", "crimson");
+        }
     });
 });
-*/

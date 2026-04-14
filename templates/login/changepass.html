@@ -10,14 +10,15 @@
 <body>
     <div class="glass-container">
     
-        <img src="../../static/img/general/uph.png" alt="Logo" class="logo">
+        <img src="/static/img/general/uph.png" alt="Logo" class="logo">
 
         <div class="content">
             <h2>CHANGE PASSWORD</h2>
 
-            <form id="passwordForm">
-                <input type="password" id="oldPassword" placeholder="Old Password" required>
+            <form id="changePasswordForm">
+                <input type="password" id="currentPassword" placeholder="Old Password" required>
                 <input type="password" id="newPassword" placeholder="New Password" required>
+                <input type="password" id="confirmPassword" placeholder="Confirm New Password" required>
 
                 <div class="requirements">
                     <p id="length" class="invalid">8+ characters</p>
@@ -29,6 +30,8 @@
                 <button type="submit">Enter</button>
             </form>
 
+            <p id="passwordError" style="display:none;"></p>
+
             <p class="note">
                 For security purposes, first-time users must change their password before accessing their account.
             </p>
@@ -37,6 +40,6 @@
     </div>
 
     
-    <script src='../../static/js/login/changepass.js'></script>
+    <script src="/static/js/login/changepass.js"></script>
 </body>
 </html>
