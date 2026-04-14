@@ -41,7 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Submit Logic (Notification with Credits) ---
     if (leaveForm) {
-        leaveForm.onsubmit = (e) => {
+        leaveForm.onsubmit = async (e) => {
             e.preventDefault();
 
             const TOTAL_SICK_CREDITS = 15;
@@ -54,6 +54,40 @@ document.addEventListener('DOMContentLoaded', () => {
             // 2. Get Dates using Name attributes (from your HTML)
             const startDateInput = document.querySelector('input[name="start_date"]');
             const endDateInput = document.querySelector('input[name="end_date"]');
+            const reasonInput = document.querySelector('.form-textarea');
+
+            if (!activeBtn || !startDateInput?.value || !endDateInput?.value || !reasonInput?.value.trim()) {
+                Swal.fire({
+                    icon: "error",
+                    title: "Missing fields",
+                    text: "Please complete all required fields.",
+                    confirmButtonColor: '#4a1d1d'
+                });
+                return;
+            }
+
+            const formData = new FormData();
+            formData.set('leave_type', activeBtn.innerText.trim());
+            formData.set('start_date', startDateInput.value);
+            formData.set('end_date', endDateInput.value);
+            formData.set('reason', reasonInput.value.trim());
+            formData.set('file_name', fileInput?.files?.[0]?.name || 'No Document Attached');
+
+            const response = await fetch('/api/leave-requests', {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({ detail: 'Request failed.' }));
+                Swal.fire({
+                    icon: "error",
+                    title: "Submission failed",
+                    text: err.detail || 'Unable to submit leave request.',
+                    confirmButtonColor: '#4a1d1d'
+                });
+                return;
+            }
 
             // 3. Calculate Credits if Sick Leave
             if (leaveTypeText.includes("Sick Leave") && startDateInput.value && endDateInput.value) {
@@ -78,13 +112,26 @@ document.addEventListener('DOMContentLoaded', () => {
                     confirmButtonColor: '#4a1d1d'
                 }).then((result) => {
                     if (result.isConfirmed) {
-                        window.location.href = 'head_leaverequest.html';
+                        window.location.href = '/templates/head/head_leaverequest.html';
                     }
                 });
             } else {
-                // Fallback if Swal is not loaded
-                alert(finalMessage);
-                window.location.href = 'head_leaverequest.html';
+                const toast = document.createElement('div');
+                toast.style.position = 'fixed';
+                toast.style.top = '20px';
+                toast.style.right = '20px';
+                toast.style.zIndex = '9999';
+                toast.style.background = '#4a1d1d';
+                toast.style.color = '#fff';
+                toast.style.padding = '10px 14px';
+                toast.style.borderRadius = '8px';
+                toast.style.fontSize = '0.9rem';
+                toast.textContent = finalMessage;
+                document.body.appendChild(toast);
+                setTimeout(function () {
+                    toast.remove();
+                    window.location.href = '/templates/head/head_leaverequest.html';
+                }, 1200);
             }
         };
     }

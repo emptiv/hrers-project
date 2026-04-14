@@ -42,7 +42,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Form Submission
     if (leaveForm) {
-        leaveForm.onsubmit = (e) => {
+        leaveForm.onsubmit = async (e) => {
             e.preventDefault();
 
             const TOTAL_SICK_CREDITS = 15;
@@ -54,6 +54,40 @@ document.addEventListener('DOMContentLoaded', () => {
             // Selecting dates by name as per your previous HTML structure
             const startDateEl = document.getElementsByName('start_date')[0];
             const endDateEl = document.getElementsByName('end_date')[0];
+            const reasonInput = document.querySelector('.form-textarea');
+
+            if (!activeBtn || !startDateEl?.value || !endDateEl?.value || !reasonInput?.value.trim()) {
+                Swal.fire({
+                    icon: "error",
+                    title: "Missing fields",
+                    text: "Please complete all required fields.",
+                    confirmButtonColor: '#4a1d1d'
+                });
+                return;
+            }
+
+            const formData = new FormData();
+            formData.set('leave_type', activeBtn.innerText.trim());
+            formData.set('start_date', startDateEl.value);
+            formData.set('end_date', endDateEl.value);
+            formData.set('reason', reasonInput.value.trim());
+            formData.set('file_name', fileInput?.files?.[0]?.name || 'No Document Attached');
+
+            const response = await fetch('/api/leave-requests', {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({ detail: 'Request failed.' }));
+                Swal.fire({
+                    icon: "error",
+                    title: "Submission failed",
+                    text: err.detail || 'Unable to submit leave request.',
+                    confirmButtonColor: '#4a1d1d'
+                });
+                return;
+            }
 
             if (leaveType.toLowerCase().includes("sick") && startDateEl.value && endDateEl.value) {
                 const start = new Date(startDateEl.value);
@@ -76,7 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 timer: 3500,
                 timerProgressBar: true
             }).then(() => {
-                window.location.href = 'sd_leaverequest.html';
+                window.location.href = '/templates/sd/sd_leaverequest.html';
             });
         };
     }

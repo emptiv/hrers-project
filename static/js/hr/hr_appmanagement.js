@@ -11,182 +11,90 @@ let activeAppFilterLabel = '';
 let activeDocPage = 1;
 let activeMainTab = 'new';
 
-// ── Sample Data ───────────────────────────────────────────────────────
-let appData = [
-    {
-        id: '001',
-        name: 'Dela Cruz, Juan',
-        email: 'juan.delacruz@example.com',
-        phoneNumber: '+63 912 345 6780',
-        dept: 'CCS',
-        applyingTo: 'CCS',
-        position: 'Instructor',
-        applyingFor: 'Instructor',
-        submitted: '02/12/2026',
-        progress: 'Stage 2 of 4',
-        status: 'pending-hr',
-        statusLabel: 'Pending - HR Evaluator',
-        reviewedBy: '---',
-        headReviewedBy: 'Department Head',
-        headReviewedAt: '03/10/2026',
-        finalReviewedBy: '---',
-        finalReviewedAt: '---',
-        pendingWith: 'HR Evaluator',
-        remarks: 'Awaiting HR evaluation.',
-        headRemarks: 'Recommended for HR review.',
-        fileName: 'Application_001.pdf'
-    },
-    {
-        id: '002',
-        name: 'Santos, Maria',
-        email: 'maria.santos@example.com',
-        phoneNumber: '+63 917 222 1144',
-        dept: 'CBA',
-        applyingTo: 'CBA',
-        position: 'Professor',
-        applyingFor: 'Professor',
-        submitted: '02/15/2026',
-        progress: 'Stage 1 of 4',
-        status: 'pending-head',
-        statusLabel: 'Pending - Dept. Head',
-        reviewedBy: '---',
-        headReviewedBy: '---',
-        headReviewedAt: '---',
-        finalReviewedBy: '---',
-        finalReviewedAt: '---',
-        pendingWith: 'Department Head',
-        remarks: 'Awaiting department head review.',
-        headRemarks: 'Complete requirements attached.',
-        fileName: 'Application_002.pdf'
-    },
-    {
-        id: '003',
-        name: 'Reyes, Ricardo',
-        email: 'ricardo.reyes@example.com',
-        phoneNumber: '+63 918 303 9901',
-        dept: 'COE',
-        applyingTo: 'COE',
-        position: 'Registrar',
-        applyingFor: 'Registrar',
-        submitted: '02/10/2026',
-        progress: 'Completed',
-        status: 'approved',
-        statusLabel: 'Approved',
-        reviewedBy: 'HR Manager',
-        headReviewedBy: 'Department Head',
-        headReviewedAt: '02/11/2026',
-        finalReviewedBy: 'HR Manager',
-        finalReviewedAt: '02/12/2026',
-        pendingWith: 'Completed',
-        remarks: 'Approved on ' + new Date().toLocaleDateString() + '.',
-        headRemarks: 'Endorsed by department head.',
-        fileName: 'Application_003.pdf'
-    },
-    {
-        id: '004',
-        name: 'Gomez, Patricia',
-        email: 'patricia.gomez@example.com',
-        phoneNumber: '+63 919 445 8802',
-        dept: 'CAS',
-        applyingTo: 'CAS',
-        position: 'Assistant Professor',
-        applyingFor: 'Assistant Professor',
-        submitted: '03/01/2026',
-        progress: 'Stage 3 of 4',
-        status: 'pending-hr',
-        statusLabel: 'Pending - HR Evaluator',
-        reviewedBy: '---',
-        headReviewedBy: 'Department Head',
-        headReviewedAt: '03/02/2026',
-        finalReviewedBy: '---',
-        finalReviewedAt: '---',
-        pendingWith: 'HR Evaluator',
-        remarks: 'Documents under review by HR.',
-        headRemarks: 'Cleared by department head.',
-        fileName: 'Application_004.pdf'
-    },
-    {
-        id: '005',
-        name: 'Torres, Miguel',
-        email: 'miguel.torres@example.com',
-        phoneNumber: '+63 920 556 2210',
-        dept: 'CON',
-        applyingTo: 'CON',
-        position: 'Clinical Instructor',
-        applyingFor: 'Clinical Instructor',
-        submitted: '03/05/2026',
-        progress: 'Completed',
-        status: 'rejected',
-        statusLabel: 'Rejected',
-        reviewedBy: 'HR Manager',
-        headReviewedBy: 'Department Head',
-        headReviewedAt: '03/06/2026',
-        finalReviewedBy: 'HR Manager',
-        finalReviewedAt: '03/08/2026',
-        pendingWith: 'Completed',
-        remarks: 'Incomplete submission requirements.',
-        headRemarks: 'For resubmission after missing documents are completed.',
-        fileName: 'Application_005.pdf'
-    }
-];
+let appData = [];
+let positionChangeData = [];
+const employeeDirectory = {};
 
-// ── Position Change Request Data ──────────────────────────────────────
-let positionChangeData = [
-    {
-        id: 'PCR-001',
-        name: 'Dela Cruz, Juan',
-        empId: 'EMP-001',
-        dept: 'CCS',
-        position: 'Instructor',
-        requestedPos: 'Senior Instructor',
-        reason: 'Completed leadership training and recommended for higher teaching load.',
-        submitted: '03/12/2026',
-        progress: 'Stage 1 of 3',
-        status: 'pending-head',
-        statusLabel: 'Pending - Dept. Head',
-        reviewedBy: '---',
-        headReviewedBy: '---',
-        headReviewedAt: '---',
-        finalReviewedBy: '---',
-        finalReviewedAt: '---',
-        pendingWith: 'Department Head',
-        remarks: 'Position change request logged by HR Manager.',
-        headRemarks: '---',
-        fileName: 'PCR_001.pdf'
-    },
-    {
-        id: 'PCR-002',
-        name: 'Santos, Maria',
-        empId: 'EMP-002',
-        dept: 'CBA',
-        position: 'Professor',
-        requestedPos: 'Dean',
-        reason: 'Designated as incoming college administrator for the next academic year.',
-        submitted: '03/15/2026',
-        progress: 'Stage 2 of 3',
-        status: 'pending-hr',
-        statusLabel: 'Pending - HR Evaluator',
-        reviewedBy: '---',
-        headReviewedBy: 'Department Head',
-        headReviewedAt: '03/16/2026',
-        finalReviewedBy: '---',
-        finalReviewedAt: '---',
-        pendingWith: 'HR Evaluator',
-        remarks: 'Awaiting final HR validation.',
-        headRemarks: 'Endorsed for administrative transition.',
-        fileName: 'PCR_002.pdf'
+function mapStatusForHr(status) {
+    if (status === 'approved' || status === 'rejected') {
+        return status;
     }
-];
+    return 'pending-hr';
+}
 
-// Mock employee lookup
-const employeeDirectory = {
-    'dela cruz, juan':   { id: 'EMP-001', position: 'Instructor',         dept: 'CCS' },
-    'santos, maria':     { id: 'EMP-002', position: 'Professor',           dept: 'CBA' },
-    'reyes, ricardo':    { id: 'EMP-003', position: 'Registrar',           dept: 'COE' },
-    'gomez, patricia':   { id: 'EMP-004', position: 'Assistant Professor', dept: 'CAS' },
-    'torres, miguel':    { id: 'EMP-005', position: 'Clinical Instructor', dept: 'CON' },
-    'johnson, alice':    { id: 'EMP-006', position: 'Senior Instructor',   dept: 'CAS' }
-};
+function mapLeaveToApp(item) {
+    var normalizedStatus = mapStatusForHr((item.status || '').toLowerCase());
+    return {
+        id: 'LR-' + item.id,
+        sourceType: 'leave',
+        sourceId: item.id,
+        name: item.name || 'N/A',
+        email: 'N/A',
+        phoneNumber: 'N/A',
+        dept: (item.role || 'N/A').replace(/_/g, ' '),
+        applyingTo: (item.role || 'N/A').replace(/_/g, ' '),
+        position: item.leaveType || 'Leave Request',
+        applyingFor: item.leaveType || 'Leave Request',
+        submitted: item.dateFiled || '---',
+        progress: normalizedStatus === 'pending-hr' ? 'In Review' : 'Completed',
+        status: normalizedStatus,
+        statusLabel: normalizedStatus === 'pending-hr' ? 'Pending - HR Evaluator' : (normalizedStatus === 'approved' ? 'Approved' : 'Rejected'),
+        reviewedBy: item.reviewedBy || '---',
+        headReviewedBy: item.reviewedBy || '---',
+        headReviewedAt: item.submitTime || '---',
+        finalReviewedBy: item.reviewedBy || '---',
+        finalReviewedAt: item.submitTime || '---',
+        pendingWith: normalizedStatus === 'pending-hr' ? 'HR Evaluator' : 'Completed',
+        remarks: item.reviewRemarks || 'Awaiting review.',
+        headRemarks: item.reason || '---',
+        fileName: item.fileName || 'No Document Attached'
+    };
+}
+
+function mapPositionToApp(item) {
+    var normalizedStatus = mapStatusForHr((item.status || '').toLowerCase());
+    return {
+        id: 'PCR-' + item.id,
+        sourceType: 'position',
+        sourceId: item.id,
+        name: item.employeeName || 'N/A',
+        empId: item.employeeId || 'N/A',
+        dept: item.currentDepartment || 'N/A',
+        position: item.currentPosition || 'N/A',
+        requestedPos: item.requestedPosition || 'N/A',
+        reason: item.reason || 'N/A',
+        submitted: item.submittedAt ? new Date(item.submittedAt).toLocaleDateString() : '---',
+        progress: normalizedStatus === 'pending-hr' ? 'In Review' : 'Completed',
+        status: normalizedStatus,
+        statusLabel: normalizedStatus === 'pending-hr' ? 'Pending - HR Evaluator' : (normalizedStatus === 'approved' ? 'Approved' : 'Rejected'),
+        reviewedBy: item.reviewedBy || '---',
+        remarks: item.reviewRemarks || 'Awaiting review.',
+        headRemarks: item.reviewRemarks || '---',
+        fileName: 'Position_Change_' + item.id + '.pdf'
+    };
+}
+
+async function refreshAppManagementData() {
+    try {
+        var leaveResponse = await fetch('/api/leave-requests?mode=all');
+        if (leaveResponse.ok) {
+            var leavePayload = await leaveResponse.json();
+            appData = (leavePayload.items || []).map(mapLeaveToApp);
+        }
+    } catch (error) {
+        appData = [];
+    }
+
+    try {
+        var positionResponse = await fetch('/api/position-requests?mode=all');
+        if (positionResponse.ok) {
+            var positionPayload = await positionResponse.json();
+            positionChangeData = (positionPayload.items || []).map(mapPositionToApp);
+        }
+    } catch (error) {
+        positionChangeData = [];
+    }
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────
 function isFinalStatus(status) {
@@ -221,17 +129,39 @@ function resetPositionForm() {
     });
 }
 
-function autoFillEmployee(name) {
+async function autoFillEmployee(name) {
     const key    = name.trim().toLowerCase();
-    const emp    = employeeDirectory[key];
+    const fallbackEmp = employeeDirectory[key];
     const idEl   = document.getElementById('pcEmpId');
     const posEl  = document.getElementById('pcCurrentPos');
     const deptEl = document.getElementById('pcDept');
 
-    if (emp) {
-        idEl.value   = emp.id;
-        posEl.value  = emp.position;
-        deptEl.value = emp.dept;
+    if (!key) {
+        idEl.value = '';
+        posEl.value = '';
+        deptEl.value = '';
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/employees/search?q=${encodeURIComponent(name)}&limit=1`);
+        if (response.ok) {
+            const payload = await response.json();
+            const first = (payload.items || [])[0];
+            if (first) {
+                idEl.value = first.employeeNo || '';
+                posEl.value = first.currentPosition || '';
+                deptEl.value = first.currentDepartment || '';
+                return;
+            }
+        }
+    } catch (error) {
+    }
+
+    if (fallbackEmp) {
+        idEl.value   = fallbackEmp.id;
+        posEl.value  = fallbackEmp.position;
+        deptEl.value = fallbackEmp.dept;
     } else {
         idEl.value   = '';
         posEl.value  = '';
@@ -725,11 +655,9 @@ function closeViewModal() {
 }
 
 // ── Process Application ───────────────────────────────────────────────
-function processApp(id, decision) {
+async function processApp(id, decision) {
     const app = findRecordById(id);
     if (!app) return;
-
-    const dateStr = new Date().toLocaleDateString();
 
     // Guard: only allow action if it's HR's stage
     if (!canActOnApp(app.status)) {
@@ -738,39 +666,31 @@ function processApp(id, decision) {
         return;
     }
 
-    if (decision === 'Approved') {
-        app.status      = 'approved';
-        app.statusLabel = 'Approved';
-        app.progress    = 'Completed';
-        app.reviewedBy  = hrName;
-        app.finalReviewedBy = hrName;
-        app.finalReviewedAt = dateStr;
-        app.pendingWith  = 'Completed';
-        app.remarks     = 'Approved on ' + dateStr + '.';
-        showToast('approved', 'Application Approved',
-            app.name + "'s application has been successfully approved.");
-    } else {
-        app.status      = 'rejected';
-        app.statusLabel = 'Rejected';
-        app.progress    = 'Completed';
-        app.reviewedBy  = hrName;
-        app.finalReviewedBy = hrName;
-        app.finalReviewedAt = dateStr;
-        app.pendingWith  = 'Completed';
-        app.remarks     = 'Rejected on ' + dateStr + '.';
-        showToast('rejected', 'Application Rejected',
-            app.name + "'s application has been rejected.");
+    var formData = new FormData();
+    formData.append('decision', decision.toLowerCase());
+    formData.append('remarks', document.getElementById('modalAddRemarks').value.trim());
+
+    var endpoint = app.sourceType === 'position'
+        ? '/api/position-requests/' + app.sourceId + '/decision'
+        : '/api/leave-requests/' + app.sourceId + '/decision';
+
+    try {
+        var response = await fetch(endpoint, { method: 'POST', body: formData });
+        if (!response.ok) {
+            throw new Error('Failed to update request');
+        }
+
+        await refreshAppManagementData();
+        renderCurrentTab();
+
+        showToast(
+            decision === 'Approved' ? 'approved' : 'rejected',
+            decision === 'Approved' ? 'Application Approved' : 'Application Rejected',
+            app.name + (decision === 'Approved' ? "'s request has been approved." : "'s request has been rejected.")
+        );
+    } catch (error) {
+        showToast('info', 'Update Failed', 'Unable to process this request right now.');
     }
-
-    // Update modal live
-    document.getElementById('modalStatusContainer').innerHTML =
-        '<span class="status-pill ' + app.status + '">' + app.statusLabel + '</span>';
-    document.getElementById('modalRemarks').innerText      = app.remarks;
-    document.getElementById('modalAddRemarks').value       = app.remarks;
-    renderStatusHistory(app);
-    document.getElementById('modalActions').style.display  = 'none';
-
-    renderCurrentTab();
 }
 
 // ── DOM Ready ─────────────────────────────────────────────────────────
@@ -862,7 +782,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     // Save position change request
-    document.getElementById('saveRequest').addEventListener('click', function () {
+    document.getElementById('saveRequest').addEventListener('click', async function () {
         var empName      = document.getElementById('pcEmpName').value.trim();
         var empId        = document.getElementById('pcEmpId').value.trim();
         var requestedPos = document.getElementById('pcRequestedPos').value;
@@ -893,32 +813,31 @@ document.addEventListener('DOMContentLoaded', function () {
         var currentPos = document.getElementById('pcCurrentPos').value.trim() || 'N/A';
         var dept       = document.getElementById('pcDept').value.trim()       || 'N/A';
 
-        var newEntry = {
-            id:           generatePCRId(),
-            name:         empName,
-            empId:        empId || 'N/A',
-            dept:         dept,
-            position:     currentPos,
-            requestedPos: requestedPos,
-            effectiveDate: effectDate,
-            reason:       reason,
-            submitted:    new Date().toLocaleDateString(),
-            progress:     'Stage 1 of 3',
-            status:       'pending-hr',
-            statusLabel:  'Pending - HR Evaluator',
-            reviewedBy:   '---',
-            remarks:      'Position change request logged by ' + hrName + '.',
-            fileName:     'PCR_' + (positionChangeData.length + 1) + '.pdf'
-        };
+        var payload = new FormData();
+        payload.append('employee_name', empName);
+        payload.append('employee_no', empId);
+        payload.append('current_position', currentPos);
+        payload.append('current_department', dept);
+        payload.append('requested_position', requestedPos);
+        payload.append('effective_date', effectDate);
+        payload.append('reason', reason);
 
-        positionChangeData.push(newEntry);
+        try {
+            var response = await fetch('/api/position-requests', { method: 'POST', body: payload });
+            if (!response.ok) {
+                throw new Error('Failed to save request');
+            }
 
-        posModal.style.display = 'none';
-        resetPositionForm();
-        renderCurrentTab();
+            await refreshAppManagementData();
+            posModal.style.display = 'none';
+            resetPositionForm();
+            renderCurrentTab();
 
-        showToast('info', 'Request Saved',
-            'Position change request for ' + empName + ' has been logged successfully.');
+            showToast('info', 'Request Saved',
+                'Position change request for ' + empName + ' has been logged successfully.');
+        } catch (error) {
+            showToast('info', 'Save Failed', 'Unable to save request right now.');
+        }
     });
 
     // Modal approve / reject buttons
@@ -971,5 +890,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // Initial render
     setMainTab('new');
     syncFilterChip();
-    renderCurrentTab();
+    refreshAppManagementData().then(function () {
+        renderCurrentTab();
+    });
 });

@@ -40,7 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Submit & Credits Calculation ---
     if (leaveForm) {
-        leaveForm.onsubmit = (e) => {
+        leaveForm.onsubmit = async (e) => {
             e.preventDefault();
 
             const TOTAL_SICK_CREDITS = 15;
@@ -53,6 +53,40 @@ document.addEventListener('DOMContentLoaded', () => {
             // Select inputs by NAME (matching your HTML)
             const startDateInput = document.querySelector('input[name="start_date"]');
             const endDateInput = document.querySelector('input[name="end_date"]');
+            const reasonInput = document.querySelector('.form-textarea');
+
+            if (!activeBtn || !startDateInput?.value || !endDateInput?.value || !reasonInput?.value.trim()) {
+                Swal.fire({
+                    icon: "error",
+                    title: "Missing fields",
+                    text: "Please complete all required fields.",
+                    confirmButtonColor: '#4a1d1d'
+                });
+                return;
+            }
+
+            const formData = new FormData();
+            formData.set('leave_type', activeBtn.innerText.trim());
+            formData.set('start_date', startDateInput.value);
+            formData.set('end_date', endDateInput.value);
+            formData.set('reason', reasonInput.value.trim());
+            formData.set('file_name', fileInput?.files?.[0]?.name || 'No Document Attached');
+
+            const response = await fetch('/api/leave-requests', {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({ detail: 'Request failed.' }));
+                Swal.fire({
+                    icon: "error",
+                    title: "Submission failed",
+                    text: err.detail || 'Unable to submit leave request.',
+                    confirmButtonColor: '#4a1d1d'
+                });
+                return;
+            }
 
             if (leaveTypeText.includes("Sick Leave") && startDateInput.value && endDateInput.value) {
                 const start = new Date(startDateInput.value);
@@ -74,7 +108,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 confirmButtonColor: '#4a1d1d' 
             }).then((result) => {
                 if (result.isConfirmed) {
-                    window.location.href = 'emp_leaverequest.html';
+                    window.location.href = '/templates/employee/emp_leaverequest.html';
                 }
             });
         };

@@ -10,138 +10,59 @@ let activeAppFilter = '';
 let activeAppFilterLabel = '';
 let activeDocPage = 1;
 
-let appData = [
-    {
-        id: '001',
-        name: 'Dela Cruz, Juan',
-        email: 'juan.delacruz@example.com',
-        phoneNumber: '+63 912 345 6780',
-        dept: 'CCS',
-        applyingTo: 'CCS',
-        position: 'Instructor',
-        applyingFor: 'Instructor',
-        submitted: '02/12/2026',
-        progress: 'Stage 2 of 4',
-        status: 'pending-head',
-        statusLabel: 'Pending - Dept. Head',
-        hrReviewedBy: 'HR Evaluator',
-        hrReviewedAt: '02/13/2026',
-        headReviewedBy: '---',
-        headReviewedAt: '---',
-        hrHeadReviewedBy: '---',
-        hrHeadReviewedAt: '---',
-        finalReviewedBy: '---',
-        finalReviewedAt: '---',
-        pendingWith: 'Department Head',
-        remarks: 'Awaiting department head review.',
-        headRemarks: 'Candidate meets qualification baseline.',
-        fileName: 'Application_001.pdf'
-    },
-    {
-        id: '002',
-        name: 'Santos, Maria',
-        email: 'maria.santos@example.com',
-        phoneNumber: '+63 917 222 1144',
-        dept: 'CBA',
-        applyingTo: 'CBA',
-        position: 'Professor',
-        applyingFor: 'Professor',
-        submitted: '02/15/2026',
-        progress: 'Stage 3 of 4',
-        status: 'pending-hrhead',
-        statusLabel: 'Pending - HR Head',
-        hrReviewedBy: 'HR Evaluator',
-        hrReviewedAt: '02/16/2026',
-        headReviewedBy: 'Department Head',
-        headReviewedAt: '02/17/2026',
-        hrHeadReviewedBy: '---',
-        hrHeadReviewedAt: '---',
-        finalReviewedBy: '---',
-        finalReviewedAt: '---',
-        pendingWith: 'HR Head',
-        remarks: 'Forwarded to HR Head for final HR validation.',
-        headRemarks: 'Department endorses application.',
-        fileName: 'Application_002.pdf'
-    },
-    {
-        id: '003',
-        name: 'Reyes, Ricardo',
-        email: 'ricardo.reyes@example.com',
-        phoneNumber: '+63 918 303 9901',
-        dept: 'COE',
-        applyingTo: 'COE',
-        position: 'Registrar',
-        applyingFor: 'Registrar',
-        submitted: '02/10/2026',
-        progress: 'Completed',
-        status: 'approved',
-        statusLabel: 'Approved',
-        hrReviewedBy: 'HR Evaluator',
-        hrReviewedAt: '02/11/2026',
-        headReviewedBy: 'Department Head',
-        headReviewedAt: '02/12/2026',
-        hrHeadReviewedBy: 'HR Head',
-        hrHeadReviewedAt: '02/13/2026',
-        finalReviewedBy: 'School Director',
-        finalReviewedAt: '02/14/2026',
-        pendingWith: 'Completed',
-        remarks: 'Approved and completed workflow.',
-        headRemarks: 'Endorsed by department.',
-        fileName: 'Application_003.pdf'
-    },
-    {
-        id: '004',
-        name: 'Gomez, Patricia',
-        email: 'patricia.gomez@example.com',
-        phoneNumber: '+63 919 445 8802',
-        dept: 'CAS',
-        applyingTo: 'CAS',
-        position: 'Assistant Professor',
-        applyingFor: 'Assistant Professor',
-        submitted: '03/01/2026',
-        progress: 'Stage 4 of 4',
-        status: 'pending-sd',
-        statusLabel: 'Pending - SD',
-        hrReviewedBy: 'HR Evaluator',
-        hrReviewedAt: '03/02/2026',
-        headReviewedBy: 'Department Head',
-        headReviewedAt: '03/03/2026',
-        hrHeadReviewedBy: 'HR Head',
-        hrHeadReviewedAt: '03/04/2026',
-        finalReviewedBy: '---',
-        finalReviewedAt: '---',
-        pendingWith: 'School Director',
-        remarks: 'Awaiting final SD approval.',
-        headRemarks: 'Recommended for final approval.',
-        fileName: 'Application_004.pdf'
-    },
-    {
-        id: '005',
-        name: 'Torres, Miguel',
-        email: 'miguel.torres@example.com',
-        phoneNumber: '+63 920 556 2210',
-        dept: 'CON',
-        applyingTo: 'CON',
-        position: 'Clinical Instructor',
-        applyingFor: 'Clinical Instructor',
-        submitted: '03/05/2026',
-        progress: 'Completed',
-        status: 'rejected',
-        statusLabel: 'Rejected',
-        hrReviewedBy: 'HR Evaluator',
-        hrReviewedAt: '03/06/2026',
-        headReviewedBy: 'Department Head',
-        headReviewedAt: '03/07/2026',
-        hrHeadReviewedBy: 'HR Head',
-        hrHeadReviewedAt: '03/08/2026',
-        finalReviewedBy: 'School Director',
-        finalReviewedAt: '03/09/2026',
-        pendingWith: 'Completed',
-        remarks: 'Rejected due to incomplete supporting requirements.',
-        headRemarks: 'Needs document resubmission before reconsideration.',
-        fileName: 'Application_005.pdf'
+let appData = [];
+
+function mapStatusForHead(status) {
+    if (status === 'approved' || status === 'rejected') {
+        return status;
     }
-];
+    return 'pending-head';
+}
+
+function mapLeaveToHeadApp(item) {
+    const normalizedStatus = mapStatusForHead((item.status || '').toLowerCase());
+    return {
+        id: 'LR-' + item.id,
+        sourceType: 'leave',
+        sourceId: item.id,
+        name: item.name || 'N/A',
+        email: 'N/A',
+        phoneNumber: 'N/A',
+        dept: (item.role || 'N/A').replace(/_/g, ' '),
+        applyingTo: (item.role || 'N/A').replace(/_/g, ' '),
+        position: item.leaveType || 'Leave Request',
+        applyingFor: item.leaveType || 'Leave Request',
+        submitted: item.dateFiled || '---',
+        progress: normalizedStatus === 'pending-head' ? 'In Review' : 'Completed',
+        status: normalizedStatus,
+        statusLabel: normalizedStatus === 'pending-head' ? 'Pending - Dept. Head' : (normalizedStatus === 'approved' ? 'Approved' : 'Rejected'),
+        hrReviewedBy: item.reviewedBy || '---',
+        hrReviewedAt: item.submitTime || '---',
+        headReviewedBy: item.reviewedBy || '---',
+        headReviewedAt: item.submitTime || '---',
+        hrHeadReviewedBy: '---',
+        hrHeadReviewedAt: '---',
+        finalReviewedBy: item.reviewedBy || '---',
+        finalReviewedAt: item.submitTime || '---',
+        pendingWith: normalizedStatus === 'pending-head' ? 'Department Head' : 'Completed',
+        remarks: item.reviewRemarks || 'Awaiting review.',
+        headRemarks: item.reason || '---',
+        fileName: item.fileName || 'No Document Attached'
+    };
+}
+
+async function refreshHeadApplications() {
+    try {
+        const response = await fetch('/api/leave-requests?mode=all');
+        if (!response.ok) {
+            throw new Error('Failed to load applications');
+        }
+        const payload = await response.json();
+        appData = (payload.items || []).map(mapLeaveToHeadApp);
+    } catch (error) {
+        appData = [];
+    }
+}
 
 function isFinalStatus(status) {
     return status === 'approved' || status === 'rejected';
@@ -399,7 +320,7 @@ function closeViewModal() {
     document.getElementById('viewModal').style.display = 'none';
 }
 
-function processApp(id, decision) {
+async function processApp(id, decision) {
     const app = appData.find(function (a) { return a.id === id; });
     if (!app) return;
 
@@ -407,34 +328,25 @@ function processApp(id, decision) {
         return;
     }
 
-    const dateStr = new Date().toLocaleDateString();
-    app.headReviewedBy = headName;
-    app.headReviewedAt = dateStr;
+    const formData = new FormData();
+    formData.append('decision', decision.toLowerCase());
+    formData.append('remarks', document.getElementById('modalAddRemarks').value.trim());
 
-    if (decision === 'Approved') {
-        app.status = 'pending-hrhead';
-        app.statusLabel = 'Pending - HR Head';
-        app.progress = 'Stage 3 of 4';
-        app.pendingWith = 'HR Head';
-        app.remarks = 'Endorsed by Department Head on ' + dateStr + '.';
-    } else {
-        app.status = 'rejected';
-        app.statusLabel = 'Rejected';
-        app.progress = 'Completed';
-        app.pendingWith = 'Completed';
-        app.finalReviewedBy = headName;
-        app.finalReviewedAt = dateStr;
-        app.remarks = 'Rejected by Department Head on ' + dateStr + '.';
+    try {
+        const response = await fetch('/api/leave-requests/' + app.sourceId + '/decision', {
+            method: 'POST',
+            body: formData
+        });
+        if (!response.ok) {
+            throw new Error('Failed to update application');
+        }
+
+        await refreshHeadApplications();
+        renderTable();
+        closeViewModal();
+    } catch (error) {
+        // Keep current UI state if request fails.
     }
-
-    document.getElementById('modalStatusContainer').innerHTML = '<span class="status-pill ' + app.status + '">' + app.statusLabel + '</span>';
-    document.getElementById('modalRemarks').innerText = app.remarks;
-    document.getElementById('modalAddRemarks').value = app.remarks;
-    document.getElementById('modalProgress').innerText = app.progress;
-    renderStatusHistory(app);
-    document.getElementById('modalActions').style.display = 'none';
-
-    renderTable();
 }
 
 document.addEventListener('DOMContentLoaded', function () {
@@ -522,5 +434,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     syncFilterChip();
-    renderTable();
+    refreshHeadApplications().then(function () {
+        renderTable();
+    });
 });

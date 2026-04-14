@@ -50,7 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Form Submission Logic ---
     if (leaveForm) {
-        leaveForm.onsubmit = (e) => {
+        leaveForm.onsubmit = async (e) => {
             e.preventDefault();
 
             const TOTAL_SICK_CREDITS = 15;
@@ -58,7 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const leaveType = activeBtn ? activeBtn.innerText : "General Leave";
             const startDateVal = document.getElementsByName('start_date')[0].value;
             const endDateVal = document.getElementsByName('end_date')[0].value;
-            const reasonVal = document.getElementById('leaveReason').value;
+            const reasonVal = (document.querySelector('.form-textarea')?.value || '').trim();
 
             // Simple validation
             if (!startDateVal || !endDateVal || !reasonVal) {
@@ -66,6 +66,29 @@ document.addEventListener('DOMContentLoaded', () => {
                     icon: 'error',
                     title: 'Missing Info',
                     text: 'Please fill in all required fields.',
+                    confirmButtonColor: '#4a1d1d'
+                });
+                return;
+            }
+
+            const formData = new FormData();
+            formData.set('leave_type', leaveType.trim());
+            formData.set('start_date', startDateVal);
+            formData.set('end_date', endDateVal);
+            formData.set('reason', reasonVal);
+            formData.set('file_name', fileInput?.files?.[0]?.name || selectedFileName);
+
+            const response = await fetch('/api/leave-requests', {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({ detail: 'Request failed.' }));
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Submission Failed',
+                    text: err.detail || 'Unable to submit leave request.',
                     confirmButtonColor: '#4a1d1d'
                 });
                 return;
@@ -94,7 +117,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 timerProgressBar: true
             }).then(() => {
                 // Redirecting without saving to LocalStorage
-                window.location.href = 'hr_leaverequest.html';
+                window.location.href = '/templates/hr/hr_leaverequest.html';
             });
         };
     }

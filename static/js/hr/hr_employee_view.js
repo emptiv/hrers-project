@@ -131,7 +131,30 @@ document.addEventListener('DOMContentLoaded', () => {
                 document.getElementById('eventTitle').value = "";
                 document.getElementById('eventDesc').value = "";
             } else {
-                alert("Please fill in all fields before saving.");
+                if (window.Swal && typeof window.Swal.fire === 'function') {
+                    window.Swal.fire({
+                        icon: 'warning',
+                        title: 'Missing fields',
+                        text: 'Please fill in all fields before saving.',
+                        confirmButtonColor: '#4a1d1d',
+                    });
+                } else {
+                    const toast = document.createElement('div');
+                    toast.style.position = 'fixed';
+                    toast.style.top = '20px';
+                    toast.style.right = '20px';
+                    toast.style.zIndex = '9999';
+                    toast.style.background = '#4a1d1d';
+                    toast.style.color = '#fff';
+                    toast.style.padding = '10px 14px';
+                    toast.style.borderRadius = '8px';
+                    toast.style.fontSize = '0.9rem';
+                    toast.textContent = 'Please fill in all fields before saving.';
+                    document.body.appendChild(toast);
+                    setTimeout(function () {
+                        toast.remove();
+                    }, 2200);
+                }
             }
         });
     }

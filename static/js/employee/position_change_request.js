@@ -1,15 +1,4 @@
 /* position_change_request.js */
-const empInfo = { name: "John Smith" };
-
-// ── Mock employee directory ──
-const employeeDirectory = {
-    'dela cruz, juan': { id: 'EMP-001', position: 'Instructor',          dept: 'CCS' },
-    'santos, maria':   { id: 'EMP-002', position: 'Professor',            dept: 'CBA' },
-    'reyes, ricardo':  { id: 'EMP-003', position: 'Registrar',            dept: 'COE' },
-    'gomez, patricia': { id: 'EMP-004', position: 'Assistant Professor',  dept: 'CAS' },
-    'torres, miguel':  { id: 'EMP-005', position: 'Clinical Instructor',  dept: 'CON' },
-    'johnson, alice':  { id: 'EMP-006', position: 'Senior Instructor',    dept: 'CAS' }
-};
 
 document.addEventListener('DOMContentLoaded', () => {
     const recordsPageUrl = '../history/timeline.html';
@@ -28,6 +17,39 @@ document.addEventListener('DOMContentLoaded', () => {
     const confirmCancelBtn = document.getElementById('confirmCancelBtn');
     const stayBtn          = document.getElementById('stayBtn');
 
+    async function autoFillEmployeeDetails(nameValue) {
+        const key = nameValue.trim().toLowerCase();
+        const empIdEl = document.getElementById('empId');
+        const currentPosEl = document.getElementById('currentPos');
+        const currentDeptEl = document.getElementById('currentDept');
+
+        if (!key) {
+            empIdEl.value = '';
+            currentPosEl.value = '';
+            currentDeptEl.value = '';
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/employees/search?q=${encodeURIComponent(nameValue)}&limit=1`);
+            if (response.ok) {
+                const payload = await response.json();
+                const first = (payload.items || [])[0];
+                if (first) {
+                    empIdEl.value = first.employeeNo || '';
+                    currentPosEl.value = first.currentPosition || '';
+                    currentDeptEl.value = first.currentDepartment || '';
+                    return;
+                }
+            }
+        } catch (error) {
+        }
+
+        empIdEl.value = '';
+        currentPosEl.value = '';
+        currentDeptEl.value = '';
+    }
+
     // Initialize tooltip labels for collapsed sidebar
     menuItems.forEach(item => {
         const span = item.querySelector('span');
@@ -40,12 +62,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Auto-fill employee details on blur
     empNameInput.addEventListener('blur', () => {
-        const key = empNameInput.value.trim().toLowerCase();
-        const emp = employeeDirectory[key];
-
-        document.getElementById('empId').value      = emp ? emp.id       : '';
-        document.getElementById('currentPos').value = emp ? emp.position : '';
-        document.getElementById('currentDept').value = emp ? emp.dept    : '';
+        autoFillEmployeeDetails(empNameInput.value);
     });
 
     // ── Cancel button → show static modal ──
@@ -106,31 +123,33 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            const requestRecord = {
-                employeeName: empName,
-                employeeId: empId,
-                currentPosition: currentPos,
-                currentDepartment: currentDept,
-                requestedPosition: requestedPos,
-                effectiveDate,
-                reason,
-                submittedAt: new Date().toISOString(),
-                status: 'Pending'
-            };
+            const payload = new FormData();
+            payload.set('employee_name', empName);
+            payload.set('employee_no', empId);
+            payload.set('current_position', currentPos);
+            payload.set('current_department', currentDept);
+            payload.set('requested_position', requestedPos);
+            payload.set('effective_date', effectiveDate);
+            payload.set('reason', reason);
 
-            try {
-                const existingRecords = JSON.parse(localStorage.getItem('positionChangeRequests') || '[]');
-                existingRecords.unshift(requestRecord);
-                localStorage.setItem('positionChangeRequests', JSON.stringify(existingRecords));
-            } catch (error) {
-                console.warn('Unable to persist position change request locally.', error);
-            }
+            fetch('/api/position-requests', {
+                method: 'POST',
+                body: payload,
+            })
+                .then(async (res) => {
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({ detail: 'Submission failed.' }));
+                        throw new Error(err.detail || 'Submission failed.');
+                    }
 
-            showSuccessNotification(`${empName}'s position change request has been successfully submitted.`);
-
-            setTimeout(() => {
-                window.location.href = `${recordsPageUrl}?employee=${encodeURIComponent(empName)}`;
-            }, 1200);
+                    showSuccessNotification(`${empName}'s position change request has been successfully submitted.`);
+                    setTimeout(() => {
+                        window.location.href = `${recordsPageUrl}?employee=${encodeURIComponent(empName)}`;
+                    }, 1200);
+                })
+                .catch((error) => {
+                    showToast(error.message || 'Unable to submit request.');
+                });
         });
     }
 

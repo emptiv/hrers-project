@@ -1,8 +1,6 @@
 /* =================================
-   User Management JavaScript
-   ================================= */
-
-console.log("User Management JS Loaded - Version 4. If you do not see this, YOUR BROWSER IS CACHING THE OLD FILE!");
+    User Management JavaScript
+    ================================= */
 
 let currentEditingUserId = null;
 let selectedUsers = [];
@@ -196,12 +194,10 @@ function updateSelectedUsers() {
 }
 
 function openUserModal() {
-    console.log("1. Button clicked! Trying to open modal...");
-
     const modal = document.getElementById('userModal');
     if (!modal) {
         console.error("ERROR: Cannot find the modal HTML. Did the ID get deleted?");
-        alert("Developer Error: Modal not found. Check F12 Console.");
+        showAlert("Developer Error: Modal not found. Check F12 Console.", 'danger');
         return;
     }
 
@@ -226,7 +222,6 @@ function openUserModal() {
 
     // Finally, force it to show!
     modal.classList.add('show');
-    console.log("2. Modal opened successfully!");
 }
 // Make the function globally available so the inline `onclick="openUserModal()"` attribute can find it.
 window.openUserModal = openUserModal;
@@ -333,13 +328,24 @@ function closeConfirmModal() {
 async function handleUserFormSubmit(e) {
     e.preventDefault();
 
-    const form = e.target;
-    const formData = new FormData(form);
+    const formData = new FormData();
     const userId = document.getElementById('userIdForEdit').value;
 
+    const firstName = (document.getElementById('firstName')?.value || '').trim();
+    const lastName = (document.getElementById('lastName')?.value || '').trim();
+    const email = (document.getElementById('email')?.value || '').trim();
+    const username = email ? email.split('@')[0] : '';
+    const role = (document.getElementById('role')?.value || '').trim();
+
+    formData.set('firstName', firstName);
+    formData.set('lastName', lastName);
+    formData.set('email', email);
+    formData.set('username', username);
+    formData.set('role', role);
+
     // Grab whatever the HTML input names are (usually password / confirm_password)
-    const pwd = formData.get('password') || formData.get('password1');
-    const confirmPwd = formData.get('confirm_password') || formData.get('confirmPassword') || formData.get('password2');
+    const pwd = (document.getElementById('password')?.value || '').trim();
+    const confirmPwd = (document.getElementById('confirmPassword')?.value || '').trim();
 
     // Force them into the names Django's CustomUserCreationForm expects
     if (pwd) formData.set('password1', pwd);
@@ -397,15 +403,17 @@ async function handleUserFormSubmit(e) {
 async function handleAssignRoleSubmit(e) {
     e.preventDefault();
 
-    const form = e.target;
-    const formData = new FormData(form);
+    const formData = new FormData();
+    formData.set('assignRoleUserId', document.getElementById('assignRoleUserId')?.value || '');
+    formData.set('newRole', document.getElementById('newRole')?.value || '');
+    formData.set('newDepartment', document.getElementById('newDepartment')?.value || '');
 
-    if (!formData.get('role')) {
+    if (!formData.get('newRole')) {
         showAlert('Please select a role!', 'danger');
         return;
     }
 
-    if (formData.get('role') === 'HEAD' && !formData.get('department')) {
+    if (formData.get('newRole') === 'head' && !formData.get('newDepartment')) {
         showAlert('Please select a department for department heads!', 'danger');
         return;
     }
@@ -443,11 +451,13 @@ async function handleAssignRoleSubmit(e) {
 async function handleResetPasswordSubmit(e) {
     e.preventDefault();
 
-    const form = e.target;
-    const formData = new FormData(form);
+    const formData = new FormData();
+    formData.set('resetUserId', document.getElementById('resetUserId')?.value || '');
+    formData.set('newPassword', document.getElementById('newPassword')?.value || '');
+    formData.set('confirmNewPassword', document.getElementById('confirmNewPassword')?.value || '');
 
-    const newPassword = formData.get('new_password1');
-    const confirmPassword = formData.get('new_password2');
+    const newPassword = formData.get('newPassword');
+    const confirmPassword = formData.get('confirmNewPassword');
 
     if (newPassword !== confirmPassword) {
         showAlert('Passwords do not match!', 'danger');
@@ -494,12 +504,8 @@ function updatePasswordStrength(e) {
 }
 
 function updatePasswordStrengthForCreateEdit(e) {
-    // This function is for the create/edit user modal's password fields
-    // It doesn't have a dedicated strength indicator in the HTML, so we'll just log for now
     const password = e.target.value;
-    // You might want to add a strength indicator to the create/edit modal as well
-    // For now, this is a placeholder.
-    console.log('Password strength for create/edit:', getPasswordStrength(password));
+    getPasswordStrength(password);
 }
 
 function getPasswordStrength(password) {
@@ -569,8 +575,6 @@ function confirmUserStatusChange(userId, action) {
     
     confirmedAction = { type: 'single', action: action, userId: userId };
     modal.style.display = 'flex'; 
-
-    console.log("2. Modal opened successfully!");
 }
 
 // And for closing:
@@ -833,7 +837,6 @@ document.addEventListener('DOMContentLoaded', function() {
     if (userForm) {
         // This tells the form: "When Save is clicked, run handleUserFormSubmit"
         userForm.addEventListener('submit', handleUserFormSubmit);
-        console.log("PAIRED: Save button is now connected to the code!");
     } else {
         console.error("ERROR: Could not find the form with ID 'userForm'!");
     }

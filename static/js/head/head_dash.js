@@ -29,6 +29,7 @@ function initializeDashboard() {
     
     // Load dynamic data
     loadDashboardData();
+    loadDashboardNotifications();
     
     // Setup quote rotation
     setDailyQuote();
@@ -98,16 +99,13 @@ function setupQuickActionButtons() {
 function handleQuickAction(action) {
     switch(action) {
         case 'Add Employee':
-            console.log('Opening Add Employee dialog...');
-            // TODO: Navigate to add employee page or open modal
+            window.location.href = '/templates/head/head_employeelist.html';
             break;
         case 'Approve Leave':
-            console.log('Opening Approve Leave dialog...');
-            // TODO: Navigate to leave approval page
+            window.location.href = '/templates/head/head_leaverequest.html';
             break;
         case 'Generate Report':
-            console.log('Opening Generate Report dialog...');
-            // TODO: Navigate to report generation page
+            window.location.href = '/templates/head/head_appmanagement.html';
             break;
     }
 }
@@ -134,6 +132,41 @@ function clearAllNotifications() {
         emptyMessage.style.cssText = 'padding: 2rem 1.5rem; text-align: center; color: var(--hr-text-light); font-size: 0.9rem;';
         emptyMessage.innerText = 'No notifications';
         notificationsList.appendChild(emptyMessage);
+    }
+}
+
+async function loadDashboardNotifications() {
+    const notificationsList = document.querySelector('.notifications-list');
+    if (!notificationsList) return;
+
+    try {
+        const response = await fetch('/api/dashboard/notifications');
+        if (!response.ok) return;
+
+        const payload = await response.json();
+        const items = payload.items || [];
+
+        if (!items.length) {
+            clearAllNotifications();
+            return;
+        }
+
+        notificationsList.innerHTML = '';
+        items.forEach(function (item) {
+            const node = document.createElement('div');
+            node.className = 'notification-item';
+            node.innerHTML = `
+                <div class="notification-icon ${item.type || 'info'}">
+                    <i class="fas ${item.type === 'success' ? 'fa-check-circle' : (item.type === 'warning' ? 'fa-exclamation-circle' : 'fa-info-circle')}"></i>
+                </div>
+                <div class="notification-content">
+                    <p class="notification-message">${item.message || 'Notification'}</p>
+                    <p class="notification-time">${item.time || 'Unknown'}</p>
+                </div>
+            `;
+            notificationsList.appendChild(node);
+        });
+    } catch (error) {
     }
 }
 
@@ -272,23 +305,34 @@ function loadDailyQuote() {
    DASHBOARD DATA
    ================================= */
 
-function loadDashboardData() {
-    // Simulate loading KPI data
-    // In a real application, this would be fetched from the backend
-    
+async function loadDashboardData() {
     const totalEmployeesEl = document.getElementById('totalEmployees');
     const activeEmployeesEl = document.getElementById('activeEmployees');
     const onLeaveEl = document.getElementById('onLeave');
-    
-    // Animate numbers
+
+    let totalEmployees = 450;
+    let onLeaveCount = 22;
+
+    try {
+        const response = await fetch('/api/reports/kpi');
+        if (response.ok) {
+            const payload = await response.json();
+            totalEmployees = Number(payload.totalEmployees || totalEmployees);
+            onLeaveCount = Number((payload.summary && payload.summary.totalLeaves) || onLeaveCount);
+        }
+    } catch (error) {
+    }
+
+    const activeEmployees = Math.max(totalEmployees - onLeaveCount, 0);
+
     if (totalEmployeesEl) {
-        animateNumber(totalEmployeesEl, 0, 450, 1000);
+        animateNumber(totalEmployeesEl, 0, totalEmployees, 1000);
     }
     if (activeEmployeesEl) {
-        animateNumber(activeEmployeesEl, 0, 428, 1000);
+        animateNumber(activeEmployeesEl, 0, activeEmployees, 1000);
     }
     if (onLeaveEl) {
-        animateNumber(onLeaveEl, 0, 22, 800);
+        animateNumber(onLeaveEl, 0, onLeaveCount, 800);
     }
 }
 

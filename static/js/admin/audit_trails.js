@@ -144,9 +144,49 @@ function calculateSessionDuration(loginTime, logoutTime) {
         return 'Still Active';
     }
 
-    // Parse times and calculate duration
-    // This is a simplified version - in real app would use proper date parsing
-    return 'Duration calculation would go here';
+    const login = parseAuditDateTime(loginTime);
+    const logout = parseAuditDateTime(logoutTime);
+    if (!login || !logout) {
+        return 'Unavailable';
+    }
+
+    const diffMs = logout.getTime() - login.getTime();
+    if (diffMs <= 0) {
+        return 'Unavailable';
+    }
+
+    const totalMinutes = Math.floor(diffMs / 60000);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `${hours}h ${String(minutes).padStart(2, '0')}m`;
+}
+
+function parseAuditDateTime(value) {
+    if (!value) return null;
+
+    const normalized = String(value)
+        .replace(/\bat\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const parsed = new Date(normalized);
+    if (!Number.isNaN(parsed.getTime())) {
+        return parsed;
+    }
+
+    const timeMatch = normalized.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    if (!timeMatch) return null;
+
+    let hour = Number(timeMatch[1]);
+    const minute = Number(timeMatch[2]);
+    const period = timeMatch[3].toUpperCase();
+
+    if (period === 'PM' && hour !== 12) hour += 12;
+    if (period === 'AM' && hour === 12) hour = 0;
+
+    const fallback = new Date();
+    fallback.setHours(hour, minute, 0, 0);
+    return fallback;
 }
 
 function openExportModal() {
@@ -170,20 +210,114 @@ function handleExport(e) {
         return;
     }
 
-    // Create export
-    console.log('Exporting logs:', {
-        format: format,
-        fromDate: fromDate,
-        logTypes: logTypes
+    const exportRows = collectExportRows(logTypes, fromDate);
+    if (!exportRows.length) {
+        showAlert('No matching records found for export.', 'warning');
+        return;
+    }
+
+    // Export as CSV for now even when Excel/PDF is selected.
+    const filename = `audit-logs-${new Date().toISOString().split('T')[0]}.csv`;
+    downloadCsv(filename, exportRows);
+
+    showAlert(`Exported ${exportRows.length} row(s) as CSV.`, 'success');
+    closeExportModal();
+}
+
+function collectExportRows(logTypes, fromDate) {
+    const rows = [];
+    const includeLogin = logTypes.includes('login');
+    const includeActivity = logTypes.includes('activity');
+
+    if (includeLogin) {
+        document.querySelectorAll('#loginLogsBody tr').forEach(function (tr) {
+            if (tr.style.display === 'none') return;
+            const cells = tr.querySelectorAll('td');
+            if (cells.length < 7) return;
+
+            rows.push({
+                logType: 'login',
+                user: cells[0].textContent.trim(),
+                email: cells[1].textContent.trim(),
+                dateTime: cells[2].textContent.trim(),
+                action: 'Login Session',
+                details: `Logout: ${cells[3].textContent.trim()}, IP: ${cells[4].textContent.trim()}, Device: ${cells[5].textContent.trim()}`,
+                status: cells[6].textContent.trim(),
+            });
+        });
+    }
+
+    if (includeActivity) {
+        document.querySelectorAll('.activity-log-item').forEach(function (item) {
+            if (item.style.display === 'none') return;
+
+            const action = item.querySelector('.action')?.textContent?.trim() || 'Activity';
+            const user = item.querySelector('.user-name')?.textContent?.trim() || 'Unknown User';
+            const dateTime = item.querySelector('.timestamp')?.textContent?.trim() || '';
+            const status = item.querySelector('.status, .badge, .state')?.textContent?.trim() || 'N/A';
+            const details = item.querySelector('.description, .details')?.textContent?.trim() || item.textContent.trim();
+
+            rows.push({
+                logType: 'activity',
+                user: user,
+                email: '',
+                dateTime: dateTime,
+                action: action,
+                details: details,
+                status: status,
+            });
+        });
+    }
+
+    if (!fromDate) {
+        return rows;
+    }
+
+    const from = new Date(fromDate + 'T00:00:00');
+    if (Number.isNaN(from.getTime())) {
+        return rows;
+    }
+
+    return rows.filter(function (row) {
+        const parsed = new Date(row.dateTime);
+        if (Number.isNaN(parsed.getTime())) return true;
+        return parsed >= from;
+    });
+}
+
+function csvEscape(value) {
+    const text = String(value == null ? '' : value);
+    if (text.includes('"') || text.includes(',') || text.includes('\n')) {
+        return '"' + text.replace(/"/g, '""') + '"';
+    }
+    return text;
+}
+
+function downloadCsv(filename, rows) {
+    const headers = ['Log Type', 'User', 'Email', 'Date/Time', 'Action', 'Details', 'Status'];
+    const lines = [headers.map(csvEscape).join(',')];
+
+    rows.forEach(function (row) {
+        lines.push([
+            row.logType,
+            row.user,
+            row.email,
+            row.dateTime,
+            row.action,
+            row.details,
+            row.status,
+        ].map(csvEscape).join(','));
     });
 
-    // Simulate download
-    const filename = `audit-logs-${new Date().toISOString().split('T')[0]}.${format === 'csv' ? 'csv' : format === 'excel' ? 'xlsx' : 'pdf'}`;
-    
-    showAlert(`Exporting ${logTypes.join(', ')} as ${format.toUpperCase()}...`, 'success');
-    closeExportModal();
-
-    // In a real app, this would trigger a file download from the backend
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 }
 
 function executeConfirmedAction() {

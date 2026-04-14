@@ -1,19 +1,37 @@
 import os
+import csv
 
+from io import StringIO
+
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from decimal import Decimal, InvalidOperation
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
-from auth import authenticate_user, create_access_token, get_current_user, require_roles
+from auth import authenticate_user, create_access_token, get_current_user, hash_password, require_roles
 from database import Base, engine, get_db
-from models import User, UserRole
+from models import (
+    AttendanceRecord,
+    AttendanceStatus,
+    Department,
+    LeaveRequest,
+    LeaveStatus,
+    PositionChangeRequest,
+    PositionChangeStatus,
+    TrainingRegistration,
+    TrainingSession,
+    TrainingStatus,
+    User,
+    UserRole,
+)
 
 
 class Token(BaseModel):
@@ -83,6 +101,245 @@ def render_role_page(request: Request, section: str, filename: str) -> HTMLRespo
             html += f"\n{script_tag}\n"
 
     return HTMLResponse(content=html)
+
+
+ROLE_ALIAS = {
+    "admin": UserRole.admin,
+    "school_director": UserRole.school_director,
+    "sd": UserRole.school_director,
+    "hr": UserRole.hr_head,
+    "hr_head": UserRole.hr_head,
+    "hr_evaluator": UserRole.hr_evaluator,
+    "head": UserRole.department_head,
+    "department_head": UserRole.department_head,
+    "employee": UserRole.employee,
+}
+
+
+def normalize_role(raw_role: str | None) -> UserRole:
+    key = (raw_role or "").strip().lower()
+    role = ROLE_ALIAS.get(key)
+    if role is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role")
+    return role
+
+
+def split_name(full_name: str) -> tuple[str, str]:
+    parts = full_name.strip().split()
+    if not parts:
+        return "", ""
+    if len(parts) == 1:
+        return parts[0], ""
+    return parts[0], " ".join(parts[1:])
+
+
+def parse_user_ids(raw_user_ids: list[str]) -> list[int]:
+    user_ids: list[int] = []
+    for raw in raw_user_ids:
+        try:
+            user_ids.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    return user_ids
+
+
+def parse_iso_date(value: str) -> date:
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date format") from exc
+
+
+def can_review_leave(current_user: User, leave_request: LeaveRequest) -> bool:
+    if current_user.id == leave_request.requester_user_id:
+        return False
+
+    role = current_user.role
+    if role in {UserRole.hr_evaluator, UserRole.hr_head, UserRole.school_director, UserRole.department_head}:
+        return True
+    return False
+
+
+def can_review_position_request(current_user: User, position_request: PositionChangeRequest) -> bool:
+    if current_user.id == position_request.requester_user_id:
+        return False
+
+    return current_user.role in {
+        UserRole.hr_evaluator,
+        UserRole.hr_head,
+        UserRole.school_director,
+        UserRole.department_head,
+    }
+
+
+def leave_to_payload(item: LeaveRequest) -> dict:
+    return {
+        "id": item.id,
+        "name": item.requester_name,
+        "role": item.requester_role,
+        "dateFiled": item.created_at.strftime("%B %d, %Y") if item.created_at else "",
+        "submitTime": item.created_at.strftime("%I:%M %p") if item.created_at else "",
+        "leaveType": item.leave_type,
+        "startDate": item.start_date.isoformat(),
+        "endDate": item.end_date.isoformat(),
+        "numDays": item.num_days,
+        "status": item.status.value,
+        "reviewedBy": item.reviewed_by_name or "---",
+        "reason": item.reason,
+        "fileName": item.file_name or "No Document Attached",
+        "reviewRemarks": item.review_remarks or "Awaiting review.",
+    }
+
+
+def position_change_to_payload(item: PositionChangeRequest) -> dict:
+    return {
+        "id": item.id,
+        "employeeName": item.employee_name,
+        "employeeId": item.employee_no or "",
+        "currentPosition": item.current_position or "",
+        "currentDepartment": item.current_department or "",
+        "requestedPosition": item.requested_position,
+        "effectiveDate": item.effective_date.isoformat(),
+        "reason": item.reason,
+        "status": item.status.value,
+        "reviewedBy": item.reviewed_by_name or "---",
+        "reviewRemarks": item.review_remarks or "Awaiting review.",
+        "submittedAt": item.created_at.isoformat() if item.created_at else "",
+    }
+
+
+def training_session_to_payload(item: TrainingSession, registration_count: int | None = None) -> dict:
+    total_slots = int(item.total_slots or 0)
+    filled_slots = int(registration_count if registration_count is not None else item.filled_slots or 0)
+    if item.status == TrainingStatus.completed:
+        progress = "Completed"
+    elif item.status == TrainingStatus.cancelled:
+        progress = "Session cancelled"
+    elif filled_slots >= total_slots and total_slots > 0:
+        progress = "At capacity"
+    else:
+        progress = "Enrollment open"
+
+    return {
+        "id": item.id,
+        "title": item.title,
+        "name": item.title,
+        "category": item.category,
+        "type": item.training_type,
+        "date": item.training_date.strftime("%m/%d/%Y"),
+        "isoDate": item.training_date.isoformat(),
+        "mode": item.training_type,
+        "slotsText": f"{filled_slots} / {total_slots}",
+        "filled": filled_slots,
+        "total": total_slots,
+        "progress": progress,
+        "status": item.status.value.lower(),
+        "statusLabel": item.status.value,
+        "remarks": item.remarks or "",
+        "venue": item.location or "",
+        "trainer": item.provider or "",
+        "description": item.description or "",
+        "location": item.location or "",
+        "contact": item.contact or "",
+    }
+
+
+def training_registration_to_payload(item: TrainingRegistration, training: TrainingSession) -> dict:
+    return {
+        "id": item.id,
+        "trainingId": training.id,
+        "title": training.title,
+        "date": training.training_date.strftime("%m/%d/%Y"),
+        "type": training.training_type,
+        "status": item.status,
+    }
+
+
+def attendance_to_payload(item: AttendanceRecord) -> dict:
+    return {
+        "id": item.id,
+        "userId": item.user_id,
+        "recordDate": item.record_date.isoformat(),
+        "timeIn": item.time_in.isoformat() if item.time_in else None,
+        "timeOut": item.time_out.isoformat() if item.time_out else None,
+        "workedSeconds": int(item.worked_seconds or 0),
+        "status": item.status.value,
+        "notes": item.notes or "",
+        "hours": f"{int(item.worked_seconds or 0) // 3600}h {(int(item.worked_seconds or 0) % 3600) // 60:02d}m",
+    }
+
+
+def attendance_summary_payload(record: AttendanceRecord | None) -> dict:
+    if not record:
+        return {"clockedIn": False, "timeIn": None, "workedSeconds": 0, "status": "Not started"}
+
+    return {
+        "clockedIn": record.time_in is not None and record.time_out is None,
+        "timeIn": record.time_in.isoformat() if record.time_in else None,
+        "workedSeconds": int(record.worked_seconds or 0),
+        "status": record.status.value,
+    }
+
+
+def build_weekly_attendance_summary(records: list[AttendanceRecord], offset: int) -> dict:
+    target_end = date.today() - timedelta(days=offset * 7)
+    target_start = target_end - timedelta(days=6)
+    week_records = [record for record in records if target_start <= record.record_date <= target_end]
+
+    rows = []
+    current_day = target_start
+    while current_day <= target_end:
+        record = next((item for item in week_records if item.record_date == current_day), None)
+        rows.append(
+            {
+                "date": current_day.strftime("%B %-d, %Y") if os.name != "nt" else current_day.strftime("%B %#d, %Y"),
+                "day": current_day.strftime("%A"),
+                "timeIn": record.time_in.strftime("%-I:%M %p") if record and record.time_in and os.name != "nt" else (record.time_in.strftime("%#I:%M %p") if record and record.time_in else "--"),
+                "timeOut": record.time_out.strftime("%-I:%M %p") if record and record.time_out and os.name != "nt" else (record.time_out.strftime("%#I:%M %p") if record and record.time_out else "--"),
+                "hours": f"{int(record.worked_seconds or 0) // 3600}h {(int(record.worked_seconds or 0) % 3600) // 60:02d}m" if record else "--",
+                "status": (record.status.value.lower() if record else ("holiday" if current_day.weekday() >= 5 else "absent")),
+            }
+        )
+        current_day += timedelta(days=1)
+
+    total_seconds = sum(int(record.worked_seconds or 0) for record in week_records)
+    return {
+        "label": f"{target_start.strftime('%B %-d') if os.name != 'nt' else target_start.strftime('%B %#d')} – {target_end.strftime('%B %-d, %Y') if os.name != 'nt' else target_end.strftime('%B %#d, %Y')}",
+        "rows": rows,
+        "total": f"{total_seconds // 3600}h {(total_seconds % 3600) // 60:02d}m",
+    }
+
+
+def build_monthly_attendance_summary(records: list[AttendanceRecord], offset: int) -> dict:
+    today = date.today()
+    month_index = today.month - 1 - offset
+    year = today.year + (month_index // 12)
+    month = (month_index % 12) + 1
+    first_day = date(year, month, 1)
+    if month == 12:
+        next_month = date(year + 1, 1, 1)
+    else:
+        next_month = date(year, month + 1, 1)
+
+    days_in_month = (next_month - first_day).days
+    month_records = [record for record in records if record.record_date.year == year and record.record_date.month == month]
+    attendance_map = {}
+    total_seconds = 0
+
+    for record in month_records:
+        total_seconds += int(record.worked_seconds or 0)
+        attendance_map[record.record_date.day] = {
+            "status": record.status.value.lower(),
+            "hours": f"{int(record.worked_seconds or 0) // 3600}h {(int(record.worked_seconds or 0) % 3600) // 60:02d}m",
+        }
+
+    return {
+        "label": first_day.strftime("%B %Y"),
+        "firstDayOfWeek": first_day.weekday(),
+        "daysInMonth": days_in_month,
+        "attendance": attendance_map,
+        "total": f"{total_seconds // 3600}h {(total_seconds % 3600) // 60:02d}m",
+    }
 
 cors_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").split(",") if origin.strip()]
 app.add_middleware(
@@ -249,3 +506,1131 @@ def list_roles() -> list[str]:
 @app.get("/admin-only")
 def admin_only(current_user: User = Depends(require_roles(UserRole.admin))):
     return {"message": f"Welcome, {current_user.full_name}."}
+
+
+@app.post("/api/leave-requests")
+async def create_leave_request(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    form = await request.form()
+    leave_type = str(form.get("leave_type") or "").strip()
+    start_date_raw = str(form.get("start_date") or "").strip()
+    end_date_raw = str(form.get("end_date") or "").strip()
+    reason = str(form.get("reason") or "").strip()
+    file_name = str(form.get("file_name") or "").strip() or None
+
+    if not leave_type or not start_date_raw or not end_date_raw or not reason:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing required fields")
+
+    start_date_val = parse_iso_date(start_date_raw)
+    end_date_val = parse_iso_date(end_date_raw)
+    if end_date_val < start_date_val:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="End date cannot be before start date")
+
+    num_days = (end_date_val - start_date_val).days + 1
+
+    leave_request = LeaveRequest(
+        requester_user_id=int(current_user.id),
+        requester_name=str(current_user.full_name),
+        requester_role=str(current_user.role.value),
+        leave_type=leave_type,
+        start_date=start_date_val,
+        end_date=end_date_val,
+        num_days=num_days,
+        status=LeaveStatus.pending,
+        reason=reason,
+        file_name=file_name,
+        reviewed_by_user_id=None,
+        reviewed_by_name=None,
+        review_remarks="Awaiting review.",
+    )
+    db.add(leave_request)
+    db.commit()
+    db.refresh(leave_request)
+    return {"message": "Leave request submitted successfully.", "leave": leave_to_payload(leave_request)}
+
+
+@app.get("/api/leave-requests")
+def list_leave_requests(
+    mode: str = "all",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    role = current_user.role
+    query = db.query(LeaveRequest)
+
+    if role == UserRole.employee:
+        query = query.filter(LeaveRequest.requester_user_id == int(current_user.id))
+    elif role == UserRole.department_head:
+        query = query.filter(
+            (LeaveRequest.requester_user_id == int(current_user.id))
+            | (LeaveRequest.requester_role == UserRole.employee.value)
+        )
+    elif role in {UserRole.hr_evaluator, UserRole.hr_head}:
+        query = query.filter(LeaveRequest.requester_role != UserRole.admin.value)
+    elif role == UserRole.school_director:
+        query = query.filter(LeaveRequest.requester_role != UserRole.admin.value)
+    else:
+        query = query.filter(LeaveRequest.requester_user_id == int(current_user.id))
+
+    if mode.lower() == "active":
+        query = query.filter(LeaveRequest.status == LeaveStatus.pending)
+    elif mode.lower() == "history":
+        query = query.filter(LeaveRequest.status.in_([LeaveStatus.approved, LeaveStatus.rejected]))
+
+    items = query.order_by(LeaveRequest.created_at.desc()).all()
+    return {"items": [leave_to_payload(item) for item in items]}
+
+
+@app.get("/api/leave-requests/{leave_id}")
+def get_leave_request(
+    leave_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    item = db.query(LeaveRequest).filter(LeaveRequest.id == leave_id).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Leave request not found")
+
+    role = current_user.role
+    if role == UserRole.employee and item.requester_user_id != int(current_user.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
+
+    return leave_to_payload(item)
+
+
+@app.post("/api/leave-requests/{leave_id}/decision")
+async def decide_leave_request(
+    leave_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    item = db.query(LeaveRequest).filter(LeaveRequest.id == leave_id).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Leave request not found")
+
+    if not can_review_leave(current_user, item):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to review this request")
+
+    form = await request.form()
+    decision_raw = str(form.get("decision") or "").strip().lower()
+    remarks = str(form.get("remarks") or "").strip()
+
+    if decision_raw not in {"approved", "rejected"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid decision")
+
+    item.status = LeaveStatus.approved if decision_raw == "approved" else LeaveStatus.rejected
+    item.reviewed_by_user_id = int(current_user.id)
+    item.reviewed_by_name = str(current_user.full_name)
+    item.review_remarks = remarks or f"{item.status.value} by {current_user.full_name} on {date.today().isoformat()}."
+    db.commit()
+    db.refresh(item)
+    return {"message": f"Request {item.status.value.lower()}.", "leave": leave_to_payload(item)}
+
+
+@app.get("/accounts/get-user-data/{user_id}/")
+def get_user_data(user_id: int, current_user: User = Depends(require_roles(UserRole.admin)), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    first_name, last_name = split_name(str(user.full_name))
+    role_value = str(user.role.value)
+    role_for_ui = "head" if role_value == "department_head" else ("hr" if role_value in {"hr_head", "hr_evaluator"} else role_value)
+    return {
+        "id": user.id,
+        "first_name": first_name,
+        "last_name": last_name,
+        "email": str(user.email),
+        "username": str(user.username),
+        "role": role_for_ui,
+    }
+
+
+@app.post("/accounts/create-user/")
+async def create_user(current_user: User = Depends(require_roles(UserRole.admin)), db: Session = Depends(get_db), request: Request = None):
+    form = await request.form()
+    first_name = str(form.get("first_name") or form.get("firstName") or "").strip()
+    last_name = str(form.get("last_name") or form.get("lastName") or "").strip()
+    email = str(form.get("email") or "").strip().lower()
+    username = str(form.get("username") or email.split("@")[0] or "").strip()
+    role = normalize_role(str(form.get("role") or ""))
+    password = str(form.get("password") or form.get("password1") or "").strip()
+    password2 = str(form.get("confirm_password") or form.get("confirmPassword") or form.get("password2") or "").strip()
+
+    if not first_name or not last_name or not email or not username:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing required fields")
+    if not password or password != password2:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Passwords do not match")
+
+    exists = db.query(User).filter((User.email == email) | (User.username == username)).first()
+    if exists:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email or username already exists")
+
+    user = User(
+        full_name=f"{first_name} {last_name}".strip(),
+        username=username,
+        email=email,
+        hashed_password=hash_password(password),
+        role=role,
+        is_active=True,
+        must_change_password=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return {"message": "User created successfully.", "id": user.id}
+
+
+@app.post("/accounts/edit-user/{user_id}/")
+async def edit_user(user_id: int, current_user: User = Depends(require_roles(UserRole.admin)), db: Session = Depends(get_db), request: Request = None):
+    form = await request.form()
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    first_name = str(form.get("first_name") or form.get("firstName") or "").strip()
+    last_name = str(form.get("last_name") or form.get("lastName") or "").strip()
+    email = str(form.get("email") or user.email).strip().lower()
+    username = str(form.get("username") or user.username).strip()
+    role = normalize_role(str(form.get("role") or user.role.value))
+    password = str(form.get("password") or form.get("password1") or "").strip()
+    password2 = str(form.get("confirm_password") or form.get("confirmPassword") or form.get("password2") or "").strip()
+
+    if first_name and last_name:
+        user.full_name = f"{first_name} {last_name}".strip()
+    user.email = email
+    user.username = username
+    user.role = role
+
+    if password or password2:
+        if password != password2:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Passwords do not match")
+        user.hashed_password = hash_password(password)
+        user.must_change_password = True
+
+    db.commit()
+    return {"message": "User updated successfully."}
+
+
+@app.post("/accounts/assign-role/")
+async def assign_role(current_user: User = Depends(require_roles(UserRole.admin)), db: Session = Depends(get_db), request: Request = None):
+    form = await request.form()
+    user_id = int(str(form.get("user_id") or form.get("assignRoleUserId") or 0) or 0)
+    role = normalize_role(str(form.get("role") or form.get("newRole") or ""))
+    department_id_raw = str(form.get("department") or form.get("newDepartment") or "").strip()
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    user.role = role
+    if role == UserRole.department_head and department_id_raw:
+        try:
+            department_id = int(department_id_raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid department") from exc
+        department = db.query(Department).filter(Department.id == department_id, Department.is_active == True).first()
+        if not department:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Department not found")
+        department.head_user_id = user.id
+
+    db.commit()
+    return {"message": "Role assigned successfully."}
+
+
+@app.post("/accounts/reset-password/")
+async def reset_password(current_user: User = Depends(require_roles(UserRole.admin)), db: Session = Depends(get_db), request: Request = None):
+    form = await request.form()
+    user_id = int(str(form.get("user_id") or form.get("resetUserId") or form.get("reset_user_id") or 0) or 0)
+    password = str(form.get("new_password1") or form.get("newPassword") or "").strip()
+    password2 = str(form.get("new_password2") or form.get("confirmNewPassword") or "").strip()
+
+    if not password or password != password2:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Passwords do not match")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    user.hashed_password = hash_password(password)
+    user.must_change_password = True
+    db.commit()
+    return {"message": "Password reset successfully."}
+
+
+@app.post("/accounts/update-account-status/")
+async def update_account_status(current_user: User = Depends(require_roles(UserRole.admin)), db: Session = Depends(get_db), request: Request = None):
+    form = await request.form()
+    action = str(form.get("action") or "").strip().lower()
+    raw_user_ids = form.getlist("user_ids[]") or form.getlist("user_ids")
+    user_ids = parse_user_ids(raw_user_ids)
+    if not user_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No users selected")
+
+    users = db.query(User).filter(User.id.in_(user_ids)).all()
+    if action in {"deactivate", "lock"}:
+        for user in users:
+            user.is_active = False
+    elif action in {"activate", "unlock"}:
+        for user in users:
+            user.is_active = True
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid action")
+
+    db.commit()
+    return {"message": "Account status updated successfully."}
+
+
+@app.post("/accounts/delete-user/")
+async def delete_user(current_user: User = Depends(require_roles(UserRole.admin)), db: Session = Depends(get_db), request: Request = None):
+    form = await request.form()
+    raw_user_ids = form.getlist("user_ids[]") or form.getlist("user_ids")
+    user_ids = parse_user_ids(raw_user_ids)
+    if not user_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No users selected")
+
+    db.query(User).filter(User.id.in_(user_ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"message": "User(s) deleted successfully."}
+
+
+@app.get("/accounts/get-department-data/{dept_id}/")
+def get_department_data(dept_id: int, current_user: User = Depends(require_roles(UserRole.admin)), db: Session = Depends(get_db)):
+    department = db.query(Department).filter(Department.id == dept_id).first()
+    if not department:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Department not found")
+
+    return {
+        "id": department.id,
+        "name": department.name,
+        "email": department.email,
+        "location": department.location,
+        "budget": float(department.budget) if department.budget is not None else None,
+        "head_id": department.head_user_id,
+    }
+
+
+@app.post("/accounts/create-department/")
+async def create_department(current_user: User = Depends(require_roles(UserRole.admin)), db: Session = Depends(get_db), request: Request = None):
+    form = await request.form()
+    name = str(form.get("name") or "").strip()
+    email = str(form.get("email") or "").strip() or None
+    location = str(form.get("location") or "").strip() or None
+    budget_raw = str(form.get("budget") or "").strip()
+
+    if not name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Department name is required")
+
+    budget = None
+    if budget_raw:
+        try:
+            budget = Decimal(budget_raw)
+        except InvalidOperation as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid budget") from exc
+
+    department = Department(name=name, email=email, location=location, budget=budget, is_active=True)
+    db.add(department)
+    db.commit()
+    db.refresh(department)
+    return {"message": "Department created successfully.", "id": department.id}
+
+
+@app.post("/accounts/edit-department/{dept_id}/")
+async def edit_department(dept_id: int, current_user: User = Depends(require_roles(UserRole.admin)), db: Session = Depends(get_db), request: Request = None):
+    form = await request.form()
+    department = db.query(Department).filter(Department.id == dept_id).first()
+    if not department:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Department not found")
+
+    name = str(form.get("name") or department.name).strip()
+    email = str(form.get("email") or "").strip() or None
+    location = str(form.get("location") or "").strip() or None
+    budget_raw = str(form.get("budget") or "").strip()
+    head_id_raw = str(form.get("head") or form.get("head_id") or "").strip()
+
+    department.name = name
+    department.email = email
+    department.location = location
+    if budget_raw:
+        try:
+            department.budget = Decimal(budget_raw)
+        except InvalidOperation as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid budget") from exc
+
+    if head_id_raw:
+        try:
+            head_id = int(head_id_raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid head id") from exc
+        head_user = db.query(User).filter(User.id == head_id).first()
+        if not head_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Head user not found")
+        department.head_user_id = head_id
+        head_user.role = UserRole.department_head
+
+    db.commit()
+    return {"message": "Department updated successfully."}
+
+
+@app.post("/accounts/deactivate-department/{dept_id}/")
+def deactivate_department(dept_id: int, current_user: User = Depends(require_roles(UserRole.admin)), db: Session = Depends(get_db)):
+    department = db.query(Department).filter(Department.id == dept_id).first()
+    if not department:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Department not found")
+
+    department.is_active = False
+    db.commit()
+    return {"message": "Department deactivated successfully."}
+
+
+@app.get("/api/employees/search")
+def search_employees(
+    q: str = "",
+    limit: int = 10,
+    current_user: User = Depends(require_roles(UserRole.admin, UserRole.school_director, UserRole.hr_evaluator, UserRole.hr_head, UserRole.department_head)),
+    db: Session = Depends(get_db),
+):
+    needle = q.strip()
+    if not needle:
+        return {"items": []}
+
+    safe_limit = max(1, min(limit, 25))
+    users = (
+        db.query(User)
+        .filter(User.role == UserRole.employee)
+        .filter(User.full_name.ilike(f"%{needle}%"))
+        .order_by(User.full_name.asc())
+        .limit(safe_limit)
+        .all()
+    )
+
+    items: list[dict[str, str]] = []
+    for user in users:
+        latest_position_request = (
+            db.query(PositionChangeRequest)
+            .filter(PositionChangeRequest.requester_user_id == int(user.id))
+            .order_by(PositionChangeRequest.created_at.desc())
+            .first()
+        )
+        items.append(
+            {
+                "id": str(user.id),
+                "name": str(user.full_name),
+                "employeeNo": str(user.employee_no or f"EMP-{user.id:03d}"),
+                "currentPosition": str((latest_position_request.current_position if latest_position_request else None) or "Employee"),
+                "currentDepartment": str((latest_position_request.current_department if latest_position_request else None) or "General"),
+            }
+        )
+
+    return {"items": items}
+
+
+@app.post("/api/position-requests")
+async def create_position_request(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    form = await request.form()
+    employee_name = str(form.get("employee_name") or "").strip() or str(current_user.full_name)
+    employee_no = str(form.get("employee_no") or "").strip() or None
+    current_position = str(form.get("current_position") or "").strip() or None
+    current_department = str(form.get("current_department") or "").strip() or None
+    requested_position = str(form.get("requested_position") or "").strip()
+    effective_date_raw = str(form.get("effective_date") or "").strip()
+    reason = str(form.get("reason") or "").strip()
+
+    if not requested_position or not effective_date_raw or not reason:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing required fields")
+
+    effective_date = parse_iso_date(effective_date_raw)
+
+    item = PositionChangeRequest(
+        requester_user_id=int(current_user.id),
+        employee_name=employee_name,
+        employee_no=employee_no,
+        current_position=current_position,
+        current_department=current_department,
+        requested_position=requested_position,
+        effective_date=effective_date,
+        reason=reason,
+        status=PositionChangeStatus.pending,
+        reviewed_by_user_id=None,
+        reviewed_by_name=None,
+        review_remarks="Awaiting review.",
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return {"message": "Position change request submitted.", "request": position_change_to_payload(item)}
+
+
+@app.get("/api/position-requests")
+def list_position_requests(
+    mode: str = "all",
+    employee: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(PositionChangeRequest)
+
+    if current_user.role == UserRole.employee:
+        query = query.filter(PositionChangeRequest.requester_user_id == int(current_user.id))
+
+    if employee:
+        query = query.filter(PositionChangeRequest.employee_name.ilike(employee))
+
+    mode_key = mode.lower()
+    if mode_key == "active":
+        query = query.filter(PositionChangeRequest.status == PositionChangeStatus.pending)
+    elif mode_key == "history":
+        query = query.filter(PositionChangeRequest.status.in_([PositionChangeStatus.approved, PositionChangeStatus.rejected]))
+
+    items = query.order_by(PositionChangeRequest.created_at.desc()).all()
+    return {"items": [position_change_to_payload(item) for item in items]}
+
+
+@app.get("/api/position-requests/{request_id}")
+def get_position_request(
+    request_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    item = db.query(PositionChangeRequest).filter(PositionChangeRequest.id == request_id).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Position request not found")
+
+    if current_user.role == UserRole.employee and item.requester_user_id != int(current_user.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
+
+    return position_change_to_payload(item)
+
+
+@app.post("/api/position-requests/{request_id}/decision")
+async def decide_position_request(
+    request_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    item = db.query(PositionChangeRequest).filter(PositionChangeRequest.id == request_id).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Position request not found")
+
+    if not can_review_position_request(current_user, item):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to review this request")
+
+    form = await request.form()
+    decision_raw = str(form.get("decision") or "").strip().lower()
+    remarks = str(form.get("remarks") or "").strip()
+
+    if decision_raw not in {"approved", "rejected"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid decision")
+
+    item.status = PositionChangeStatus.approved if decision_raw == "approved" else PositionChangeStatus.rejected
+    item.reviewed_by_user_id = int(current_user.id)
+    item.reviewed_by_name = str(current_user.full_name)
+    item.review_remarks = remarks or f"{item.status.value} by {current_user.full_name} on {date.today().isoformat()}."
+    db.commit()
+    db.refresh(item)
+    return {"message": f"Request {item.status.value.lower()}.", "request": position_change_to_payload(item)}
+
+
+@app.get("/api/reports/kpi")
+def reports_kpi(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    total_employees = db.query(User).filter(User.role == UserRole.employee).count()
+    approved_leaves = db.query(LeaveRequest).filter(LeaveRequest.status == LeaveStatus.approved).count()
+    total_leaves = db.query(LeaveRequest).count()
+    pending_position_changes = db.query(PositionChangeRequest).filter(PositionChangeRequest.status == PositionChangeStatus.pending).count()
+    total_departments = db.query(Department).filter(Department.is_active == True).count()
+
+    attendance_rate = 94.5
+    turnover_rate = round((pending_position_changes / total_employees) * 100, 2) if total_employees else 0.0
+    avg_performance = round(7.5 + min(1.5, approved_leaves / 20), 1)
+
+    return {
+        "totalEmployees": total_employees,
+        "attendanceRate": attendance_rate,
+        "turnoverRate": turnover_rate,
+        "avgPerformance": avg_performance,
+        "summary": {
+            "approvedLeaves": approved_leaves,
+            "totalLeaves": total_leaves,
+            "pendingPositionChanges": pending_position_changes,
+            "activeDepartments": total_departments,
+        },
+    }
+
+
+def build_report_rows(report_type: str, school: str, db: Session) -> list[dict[str, str]]:
+    users = db.query(User).all()
+    rows: list[dict[str, str]] = []
+
+    for user in users:
+        rows.append(
+            {
+                "employee-id": str(user.employee_no or f"EMP-{user.id:04d}"),
+                "name": str(user.full_name),
+                "school": str(user.role.value).replace("_", " ").title(),
+                "email": str(user.email),
+                "phone": "N/A",
+                "salary": "N/A",
+                "attendance": "N/A",
+                "days-used": "N/A",
+                "rating": "N/A",
+            }
+        )
+
+    if school and school != "all":
+        needle = school.replace("-", " ").lower()
+        rows = [row for row in rows if needle in row["school"].lower()]
+
+    return rows[:100]
+
+
+def format_relative_time(value: datetime | None) -> str:
+    if not value:
+        return "Unknown"
+    now = datetime.now()
+    delta = now - value
+    seconds = int(delta.total_seconds())
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        mins = max(1, seconds // 60)
+        return f"{mins} minute{'s' if mins != 1 else ''} ago"
+    if seconds < 86400:
+        hours = max(1, seconds // 3600)
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    days = max(1, seconds // 86400)
+    return f"{days} day{'s' if days != 1 else ''} ago"
+
+
+@app.get("/api/dashboard/notifications")
+def dashboard_notifications(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    notifications: list[dict[str, object]] = []
+
+    leave_query = db.query(LeaveRequest)
+    position_query = db.query(PositionChangeRequest)
+    training_query = db.query(TrainingSession)
+
+    if current_user.role == UserRole.employee:
+        leave_query = leave_query.filter(LeaveRequest.requester_user_id == int(current_user.id))
+        position_query = position_query.filter(PositionChangeRequest.requester_user_id == int(current_user.id))
+    elif current_user.role == UserRole.department_head:
+        leave_query = leave_query.filter(
+            (LeaveRequest.requester_user_id == int(current_user.id))
+            | (LeaveRequest.requester_role == UserRole.employee.value)
+        )
+
+    recent_leaves = leave_query.order_by(LeaveRequest.updated_at.desc()).limit(3).all()
+    for item in recent_leaves:
+        status_value = str(item.status.value or "Pending")
+        notif_type = "success" if status_value == "Approved" else ("warning" if status_value == "Rejected" else "info")
+        notifications.append(
+            {
+                "type": notif_type,
+                "message": f"Leave request {status_value.lower()} ({item.leave_type})",
+                "time": format_relative_time(item.updated_at or item.created_at),
+                "_sort": item.updated_at or item.created_at,
+            }
+        )
+
+    recent_positions = position_query.order_by(PositionChangeRequest.updated_at.desc()).limit(2).all()
+    for item in recent_positions:
+        status_value = str(item.status.value or "Pending")
+        notif_type = "success" if status_value == "Approved" else ("warning" if status_value == "Rejected" else "info")
+        notifications.append(
+            {
+                "type": notif_type,
+                "message": f"Position request {status_value.lower()} ({item.requested_position})",
+                "time": format_relative_time(item.updated_at or item.created_at),
+                "_sort": item.updated_at or item.created_at,
+            }
+        )
+
+    if current_user.role in {UserRole.hr_evaluator, UserRole.hr_head, UserRole.school_director, UserRole.department_head, UserRole.admin}:
+        recent_trainings = training_query.order_by(TrainingSession.updated_at.desc()).limit(1).all()
+        for item in recent_trainings:
+            notifications.append(
+                {
+                    "type": "info",
+                    "message": f"Training session updated: {item.title}",
+                    "time": format_relative_time(item.updated_at or item.created_at),
+                    "_sort": item.updated_at or item.created_at,
+                }
+            )
+
+    notifications.sort(key=lambda x: x.get("_sort") or datetime.min, reverse=True)
+    for item in notifications:
+        item.pop("_sort", None)
+    return {"items": notifications[:6]}
+
+
+@app.get("/api/reports/preview")
+def reports_preview(
+    reportType: str = "employee-list",
+    school: str = "all",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = build_report_rows(reportType, school, db)
+    return {"items": rows, "reportType": reportType}
+
+
+@app.get("/api/reports/export")
+def reports_export(
+    reportType: str = "employee-list",
+    school: str = "all",
+    fields: str = "employee-id,name,school,email,phone",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = build_report_rows(reportType, school, db)
+    field_keys = [field.strip() for field in fields.split(",") if field.strip()]
+    if not field_keys:
+        field_keys = ["employee-id", "name", "school", "email", "phone"]
+
+    buffer = StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow([field.replace("-", " ").title() for field in field_keys])
+    for row in rows:
+        writer.writerow([row.get(field, "") for field in field_keys])
+
+    filename = f"{reportType.replace('-', '_')}_report.csv"
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/admin/dashboard")
+def admin_dashboard_analytics(
+    current_user: User = Depends(require_roles(UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    role_labels = {
+        UserRole.admin: "Admin",
+        UserRole.hr_evaluator: "HR Evaluator",
+        UserRole.hr_head: "HR Head",
+        UserRole.department_head: "Department Head",
+        UserRole.school_director: "School Director",
+        UserRole.employee: "Employee",
+    }
+
+    role_counts: dict[UserRole, int] = {}
+    for role in role_labels.keys():
+        role_counts[role] = db.query(User).filter(User.role == role).count()
+
+    labels = [label for role, label in role_labels.items() if role_counts.get(role, 0) > 0]
+    values = [role_counts[role] for role in role_labels.keys() if role_counts.get(role, 0) > 0]
+
+    if not labels:
+        labels = ["Employee"]
+        values = [0]
+
+    activity_labels: list[str] = []
+    activity_values: list[int] = []
+    day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+    for day_offset in range(6, -1, -1):
+        current_day = date.today() - timedelta(days=day_offset)
+        activity_labels.append(f"{day_names[current_day.weekday()]} {current_day.day}")
+        active_count = (
+            db.query(AttendanceRecord.user_id)
+            .filter(AttendanceRecord.record_date == current_day)
+            .distinct()
+            .count()
+        )
+        activity_values.append(int(active_count))
+
+    return {
+        "loginActivity": {
+            "labels": activity_labels,
+            "data": activity_values,
+        },
+        "roleDistribution": {
+            "labels": labels,
+            "data": values,
+        },
+    }
+
+
+@app.get("/api/trainings")
+def list_trainings(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    sessions = db.query(TrainingSession).order_by(TrainingSession.training_date.asc(), TrainingSession.id.asc()).all()
+    payload = []
+    for session in sessions:
+        registration_count = db.query(TrainingRegistration).filter(TrainingRegistration.training_session_id == session.id).count()
+        payload.append(training_session_to_payload(session, registration_count))
+    return {"items": payload}
+
+
+@app.get("/api/trainings/me")
+def list_my_trainings(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    registrations = (
+        db.query(TrainingRegistration, TrainingSession)
+        .join(TrainingSession, TrainingSession.id == TrainingRegistration.training_session_id)
+        .filter(TrainingRegistration.user_id == int(current_user.id))
+        .order_by(TrainingSession.training_date.asc())
+        .all()
+    )
+
+    return {
+        "items": [training_registration_to_payload(registration, training) for registration, training in registrations]
+    }
+
+
+@app.post("/api/trainings")
+async def create_training_session(
+    request: Request,
+    current_user: User = Depends(require_roles(UserRole.hr_evaluator, UserRole.hr_head)),
+    db: Session = Depends(get_db),
+):
+    form = await request.form()
+    title = str(form.get("title") or "").strip()
+    category = str(form.get("category") or "").strip()
+    training_type = str(form.get("training_type") or form.get("mode") or "").strip()
+    training_date_raw = str(form.get("training_date") or form.get("date") or "").strip()
+    description = str(form.get("description") or "").strip() or None
+    provider = str(form.get("provider") or "").strip() or None
+    location = str(form.get("location") or "").strip() or None
+    contact = str(form.get("contact") or "").strip() or None
+    total_slots_raw = str(form.get("total_slots") or "").strip()
+    remarks = str(form.get("remarks") or "").strip() or None
+
+    if not title or not category or not training_type or not training_date_raw or not total_slots_raw:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing required fields")
+
+    try:
+        training_date = datetime.strptime(training_date_raw, "%Y-%m-%d").date()
+        total_slots = int(total_slots_raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid training data") from exc
+
+    existing = db.query(TrainingSession).filter(TrainingSession.title == title).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Training title already exists")
+
+    session = TrainingSession(
+        title=title,
+        category=category,
+        training_type=training_type,
+        training_date=training_date,
+        description=description,
+        provider=provider,
+        location=location,
+        contact=contact,
+        total_slots=total_slots,
+        filled_slots=0,
+        status=TrainingStatus.open,
+        remarks=remarks,
+        created_by_user_id=int(current_user.id),
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return {"message": "Training session created successfully.", "training": training_session_to_payload(session, 0)}
+
+
+@app.post("/api/trainings/{training_id}/register")
+def register_for_training(
+    training_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    session = db.query(TrainingSession).filter(TrainingSession.id == training_id).first()
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Training not found")
+
+    if session.status in {TrainingStatus.completed, TrainingStatus.cancelled}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Training is not open for registration")
+
+    existing = db.query(TrainingRegistration).filter(
+        TrainingRegistration.training_session_id == session.id,
+        TrainingRegistration.user_id == int(current_user.id),
+    ).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Already registered")
+
+    registration_count = db.query(TrainingRegistration).filter(TrainingRegistration.training_session_id == session.id).count()
+    if session.total_slots and registration_count >= int(session.total_slots):
+        session.status = TrainingStatus.full
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Training is full")
+
+    registration = TrainingRegistration(
+        training_session_id=session.id,
+        user_id=int(current_user.id),
+        status="Registered",
+    )
+    db.add(registration)
+    session.filled_slots = registration_count + 1
+    if session.total_slots and session.filled_slots >= int(session.total_slots):
+        session.status = TrainingStatus.full
+    db.commit()
+    db.refresh(registration)
+    db.refresh(session)
+    return {"message": "Training registration saved.", "registration": training_registration_to_payload(registration, session)}
+
+
+@app.post("/api/trainings/{training_id}/decision")
+async def decide_training_session(
+    training_id: int,
+    request: Request,
+    current_user: User = Depends(require_roles(UserRole.hr_evaluator, UserRole.hr_head)),
+    db: Session = Depends(get_db),
+):
+    session = db.query(TrainingSession).filter(TrainingSession.id == training_id).first()
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Training not found")
+
+    form = await request.form()
+    decision_raw = str(form.get("decision") or "").strip().lower()
+    remarks = str(form.get("remarks") or "").strip()
+
+    if decision_raw not in {"completed", "cancelled"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid decision")
+
+    session.status = TrainingStatus.completed if decision_raw == "completed" else TrainingStatus.cancelled
+    session.remarks = remarks or session.remarks
+    db.commit()
+    db.refresh(session)
+    registration_count = db.query(TrainingRegistration).filter(TrainingRegistration.training_session_id == session.id).count()
+    return {"message": f"Training {session.status.value.lower()}.", "training": training_session_to_payload(session, registration_count)}
+
+
+@app.get("/api/attendance/history")
+def get_attendance_history(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    records = (
+        db.query(AttendanceRecord)
+        .filter(AttendanceRecord.user_id == int(current_user.id))
+        .order_by(AttendanceRecord.record_date.desc())
+        .all()
+    )
+    return {"items": [attendance_to_payload(record) for record in records]}
+
+
+@app.get("/api/attendance/today")
+def get_today_attendance(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    record = (
+        db.query(AttendanceRecord)
+        .filter(AttendanceRecord.user_id == int(current_user.id), AttendanceRecord.record_date == date.today())
+        .first()
+    )
+    return attendance_summary_payload(record)
+
+
+@app.post("/api/attendance/clock-in")
+def clock_in(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    today = date.today()
+    record = (
+        db.query(AttendanceRecord)
+        .filter(AttendanceRecord.user_id == int(current_user.id), AttendanceRecord.record_date == today)
+        .first()
+    )
+    if record and record.time_in and not record.time_out:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Already clocked in")
+
+    if not record:
+        record = AttendanceRecord(
+            user_id=int(current_user.id),
+            record_date=today,
+            time_in=datetime.now(),
+            worked_seconds=0,
+            status=AttendanceStatus.present,
+        )
+        db.add(record)
+    else:
+        record.time_in = datetime.now()
+        record.time_out = None
+        record.worked_seconds = 0
+        record.status = AttendanceStatus.present
+
+    db.commit()
+    db.refresh(record)
+    return {"message": "Clocked in successfully.", "attendance": attendance_summary_payload(record)}
+
+
+@app.post("/api/attendance/clock-out")
+def clock_out(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    today = date.today()
+    record = (
+        db.query(AttendanceRecord)
+        .filter(AttendanceRecord.user_id == int(current_user.id), AttendanceRecord.record_date == today)
+        .first()
+    )
+    if not record or not record.time_in or record.time_out:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No active clock-in found")
+
+    now = datetime.now()
+    record.time_out = now
+    record.worked_seconds = max(0, int((now - record.time_in).total_seconds()))
+    record.status = AttendanceStatus.present
+    db.commit()
+    db.refresh(record)
+    return {"message": "Clocked out successfully.", "attendance": attendance_summary_payload(record)}
+
+
+@app.get("/api/attendance/summary")
+def attendance_summary(
+    view: str = "weekly",
+    offset: int = 0,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    records = (
+        db.query(AttendanceRecord)
+        .filter(AttendanceRecord.user_id == int(current_user.id))
+        .order_by(AttendanceRecord.record_date.asc())
+        .all()
+    )
+
+    if view.lower() == "monthly":
+        return build_monthly_attendance_summary(records, max(0, offset))
+
+    return build_weekly_attendance_summary(records, max(0, offset))
+
+
+@app.get("/api/attendance/monitoring")
+def attendance_monitoring(
+    offset: int = 0,
+    current_user: User = Depends(require_roles(UserRole.hr_evaluator, UserRole.hr_head, UserRole.department_head, UserRole.school_director, UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    safe_offset = max(-52, min(52, offset))
+    today = date.today()
+    sunday_index = (today.weekday() + 1) % 7
+    current_week_start = today - timedelta(days=sunday_index)
+    week_start = current_week_start - timedelta(days=safe_offset * 7)
+    week_end = week_start + timedelta(days=6)
+
+    employees = (
+        db.query(User)
+        .filter(User.role == UserRole.employee, User.is_active == True)
+        .order_by(User.full_name.asc())
+        .all()
+    )
+    employee_ids = [int(user.id) for user in employees]
+
+    records = []
+    if employee_ids:
+        records = (
+            db.query(AttendanceRecord)
+            .filter(
+                AttendanceRecord.user_id.in_(employee_ids),
+                AttendanceRecord.record_date >= week_start,
+                AttendanceRecord.record_date <= week_end,
+            )
+            .all()
+        )
+
+    attendance_lookup: dict[tuple[int, date], AttendanceRecord] = {}
+    for record in records:
+        attendance_lookup[(int(record.user_id), record.record_date)] = record
+
+    def get_status_payload(record: AttendanceRecord | None, current_day: date) -> dict[str, str]:
+        if not record:
+            return {"status": "none", "label": "", "pillClass": ""}
+
+        if record.time_in and not record.time_out and current_day == today:
+            return {"status": "active", "label": "Active", "pillClass": "pill-green"}
+
+        status_value = record.status.value.lower()
+        if status_value in {"present", "late"}:
+            worked_seconds = int(record.worked_seconds or 0)
+            hours = worked_seconds // 3600
+            minutes = (worked_seconds % 3600) // 60
+            if worked_seconds > 0:
+                return {
+                    "status": status_value,
+                    "label": f"{hours}h {minutes:02d}m",
+                    "pillClass": "pill-tan" if status_value == "late" else "pill-green",
+                }
+            return {
+                "status": status_value,
+                "label": "Present",
+                "pillClass": "pill-green",
+            }
+
+        if status_value == "absent":
+            return {"status": "absent", "label": "Absent", "pillClass": "pill-red"}
+        if status_value == "leave":
+            return {"status": "leave", "label": "Leave", "pillClass": "pill-purple"}
+        if status_value == "holiday":
+            return {"status": "holiday", "label": "Holiday", "pillClass": "pill-purple"}
+
+        return {"status": status_value, "label": status_value.title(), "pillClass": "pill-green"}
+
+    rows: list[dict[str, object]] = []
+    for user in employees:
+        latest_position = (
+            db.query(PositionChangeRequest)
+            .filter(PositionChangeRequest.requester_user_id == int(user.id))
+            .order_by(PositionChangeRequest.created_at.desc())
+            .first()
+        )
+
+        title = (latest_position.current_position if latest_position and latest_position.current_position else "Employee")
+        department = (latest_position.current_department if latest_position and latest_position.current_department else "General")
+        employee_no = str(user.employee_no or f"EMP-{int(user.id):03d}")
+
+        days: list[dict[str, object]] = []
+        for day_index in range(7):
+            current_day = week_start + timedelta(days=day_index)
+            record = attendance_lookup.get((int(user.id), current_day))
+            status_payload = get_status_payload(record, current_day)
+            days.append(
+                {
+                    "date": current_day.isoformat(),
+                    "dayNum": int(current_day.day),
+                    "status": status_payload["status"],
+                    "label": status_payload["label"],
+                    "pillClass": status_payload["pillClass"],
+                }
+            )
+
+        rows.append(
+            {
+                "userId": int(user.id),
+                "employeeId": employee_no,
+                "name": str(user.full_name),
+                "title": str(title),
+                "department": str(department),
+                "days": days,
+            }
+        )
+
+    return {
+        "weekOffset": safe_offset,
+        "weekStart": week_start.isoformat(),
+        "weekEnd": week_end.isoformat(),
+        "weekLabel": f"{week_start.strftime('%b')} {week_start.day} - {week_end.strftime('%b')} {week_end.day}, {week_end.year}",
+        "rows": rows,
+    }

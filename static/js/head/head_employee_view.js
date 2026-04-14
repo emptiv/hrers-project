@@ -37,6 +37,40 @@ document.addEventListener('DOMContentLoaded', () => {
     // 4. Action Cell Logic (View & Download)
     const actionCells = document.querySelectorAll('.action-cell');
 
+    function isPlaceholderHref(hrefValue) {
+        if (!hrefValue) return true;
+        const normalized = hrefValue.trim().toLowerCase();
+        return normalized === '#' || normalized === 'javascript:void(0)' || normalized === 'javascript:;';
+    }
+
+    function showFileUnavailableMessage(docName) {
+        const message = `No uploaded file is available yet for "${docName}".`;
+        if (window.Swal && typeof window.Swal.fire === 'function') {
+            window.Swal.fire({
+                icon: 'info',
+                title: 'File Unavailable',
+                text: message,
+                confirmButtonColor: '#4a1d1d',
+            });
+            return;
+        }
+        const toast = document.createElement('div');
+        toast.style.position = 'fixed';
+        toast.style.top = '20px';
+        toast.style.right = '20px';
+        toast.style.zIndex = '9999';
+        toast.style.background = '#4a1d1d';
+        toast.style.color = '#fff';
+        toast.style.padding = '10px 14px';
+        toast.style.borderRadius = '8px';
+        toast.style.fontSize = '0.9rem';
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        setTimeout(function () {
+            toast.remove();
+        }, 2200);
+    }
+
     actionCells.forEach(cell => {
         const links = cell.querySelectorAll('a');
         
@@ -45,49 +79,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 const isDownload = link.hasAttribute('download') || link.querySelector('.fa-download');
                 const isView = link.querySelector('.fa-eye');
                 
-                // Get data from the table row for the mockup
+                // Get document details from the current row.
                 const row = link.closest('tr');
                 const docName = row ? row.cells[0].innerText.trim() : "Document";
-                const docType = row ? row.cells[1].innerText.trim().toLowerCase() : "pdf";
+                const href = link.getAttribute('href') || '';
+                const isPlaceholderLink = isPlaceholderHref(href);
 
                 if (isDownload) {
-                    e.preventDefault();
-                    // Create a dummy file in memory
-                    const dummyContent = `This is a mockup file for: ${docName}\nType: ${docType.toUpperCase()}`;
-                    const blob = new Blob([dummyContent], { type: 'text/plain' });
-                    const url = window.URL.createObjectURL(blob);
-                    
-                    // Trigger download
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `${docName.replace(/\s+/g, '_')}.${docType}`;
-                    document.body.appendChild(a);
-                    a.click();
-                    
-                    // Cleanup
-                    document.body.removeChild(a);
-                    window.URL.revokeObjectURL(url);
+                    if (isPlaceholderLink) {
+                        e.preventDefault();
+                        showFileUnavailableMessage(docName);
+                    }
                 } 
                 
                 else if (isView) {
-                    // For "View", if the href is just #, we open a mock window
-                    if (link.getAttribute('href') === "#") {
+                    if (isPlaceholderLink) {
                         e.preventDefault();
-                        const viewWin = window.open('', '_blank');
-                        viewWin.document.write(`
-                            <html>
-                            <body style="margin:0; display:flex; flex-direction:column; justify-content:center; align-items:center; height:100vh; font-family:sans-serif; background:#f4f4f4;">
-                                <div style="padding:40px; background:white; border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,0.1); text-align:center;">
-                                    <h1 style="color:#333;">Preview: ${docName}</h1>
-                                    <p style="color:#666;">This is a frontend preview of the ${docType.toUpperCase()} file.</p>
-                                    <hr style="margin:20px 0; border:0; border-top:1px solid #eee;">
-                                    <button onclick="window.close()" style="padding:10px 20px; cursor:pointer; background:#007bff; color:white; border:none; border-radius:4px;">Close Tab</button>
-                                </div>
-                            </body>
-                            </html>
-                        `);
+                        showFileUnavailableMessage(docName);
                     }
-                    // If href is NOT #, the browser will naturally open the file in a new tab due to target="_blank"
                 }
             });
         });

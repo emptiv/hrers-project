@@ -2,7 +2,7 @@ CREATE DATABASE IF NOT EXISTS hrers_project;
 USE hrers_project;
 
 CREATE TABLE IF NOT EXISTS users (
-    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    id INT NOT NULL AUTO_INCREMENT,
     employee_no VARCHAR(50) NULL,
     full_name VARCHAR(150) NOT NULL,
     username VARCHAR(80) NOT NULL,

@@ -23,12 +23,15 @@ document.addEventListener('DOMContentLoaded', function() {
     loadDailyQuote();
 });
 
-function initializeDashboard() {
+let attendanceChartInstance = null;
+
+async function initializeDashboard() {
     // Initialize charts
-    initializeAttendanceChart();
+    await initializeAttendanceChart();
     
     // Load dynamic data
-    loadDashboardData();
+    await loadDashboardData();
+    await loadDashboardNotifications();
     
     // Setup quote rotation
     setDailyQuote();
@@ -121,24 +124,58 @@ function clearAllNotifications() {
     }
 }
 
+async function loadDashboardNotifications() {
+    const notificationsList = document.querySelector('.notifications-list');
+    if (!notificationsList) return;
+
+    try {
+        const response = await fetch('/api/dashboard/notifications');
+        if (!response.ok) return;
+
+        const payload = await response.json();
+        const items = payload.items || [];
+
+        if (!items.length) {
+            clearAllNotifications();
+            return;
+        }
+
+        notificationsList.innerHTML = '';
+        items.forEach(function (item) {
+            const node = document.createElement('div');
+            node.className = 'notification-item';
+            node.innerHTML = `
+                <div class="notification-icon ${item.type || 'info'}">
+                    <i class="fas ${item.type === 'success' ? 'fa-check-circle' : (item.type === 'warning' ? 'fa-exclamation-circle' : 'fa-info-circle')}"></i>
+                </div>
+                <div class="notification-content">
+                    <p class="notification-message" style="margin: 0; font-weight: bold;">${item.message || 'Notification'}</p>
+                    <p class="notification-time" style="margin: 0; font-size: 0.8rem; color: #888;">${item.time || 'Unknown'}</p>
+                </div>
+            `;
+            notificationsList.appendChild(node);
+        });
+    } catch (error) {
+    }
+}
+
 /* =================================
    ATTENDANCE CHART (EMPLOYEE-SPECIFIC)
    ================================= */
 
-function initializeAttendanceChart() {
+async function initializeAttendanceChart() {
     const ctx = document.getElementById('attendanceChart');
     if (!ctx) return;
     
-    // Get last 7 days
     const labels = getLast7Days();
-    
-    // Employee-specific attendance data (simulated)
+    const workedHours = await loadAttendanceHours(labels);
+
     const data = {
         labels: labels,
         datasets: [
             {
                 label: 'Hours Worked',
-                data: [8, 8.5, 8, 7.5, 8, 8.5, 0],
+                data: workedHours,
                 backgroundColor: 'rgba(37, 99, 235, 0.1)',
                 borderColor: '#2563eb',
                 borderWidth: 2,
@@ -152,7 +189,11 @@ function initializeAttendanceChart() {
         ]
     };
     
-    new Chart(ctx, {
+    if (attendanceChartInstance) {
+        attendanceChartInstance.destroy();
+    }
+
+    attendanceChartInstance = new Chart(ctx, {
         type: 'line',
         data: data,
         options: {
@@ -196,6 +237,34 @@ function initializeAttendanceChart() {
             }
         }
     });
+}
+
+async function loadAttendanceHours(labels) {
+    try {
+        const response = await fetch('/api/attendance/history');
+        if (!response.ok) return [0, 0, 0, 0, 0, 0, 0];
+
+        const payload = await response.json();
+        const items = payload.items || [];
+        const byDate = {};
+
+        items.forEach(function (item) {
+            if (!item.recordDate) return;
+            byDate[item.recordDate] = Number(item.workedSeconds || 0) / 3600;
+        });
+
+        const values = [];
+        for (let i = 6; i >= 0; i--) {
+            const d = new Date();
+            d.setDate(d.getDate() - i);
+            const key = d.toISOString().slice(0, 10);
+            values.push(Number((byDate[key] || 0).toFixed(2)));
+        }
+
+        return values;
+    } catch (error) {
+        return [0, 0, 0, 0, 0, 0, 0];
+    }
 }
 
 /* =================================
@@ -249,36 +318,95 @@ function loadDailyQuote() {
    DASHBOARD DATA
    ================================= */
 
-function loadDashboardData() {
-    // Load evaluation data
-    loadEvaluationData();
+async function loadDashboardData() {
+    await loadEmployeeSummary();
+    await loadEvaluationData();
 }
 
-function loadEvaluationData() {
-    // Simulate loading employee evaluation data
+async function loadEvaluationData() {
     const scoreEl = document.getElementById('evaluationScore');
     const starsEl = document.getElementById('evaluationStars');
     const dateEl = document.getElementById('evaluationDate');
-    
-    // Simulated employee evaluation data
-    const evaluationData = {
-        score: 4.2,
-        stars: '⭐⭐⭐⭐',
-        date: 'March 15, 2026'
-    };
+
+    let score = 4.0;
+    let evaluatedDate = new Date().toLocaleDateString();
+
+    try {
+        const response = await fetch('/api/attendance/history');
+        if (response.ok) {
+            const payload = await response.json();
+            const items = payload.items || [];
+            const counted = items.filter(function (item) {
+                return Number(item.workedSeconds || 0) > 0;
+            });
+            const totalHours = counted.reduce(function (acc, item) {
+                return acc + (Number(item.workedSeconds || 0) / 3600);
+            }, 0);
+            const avgHours = counted.length ? totalHours / counted.length : 0;
+            score = Math.max(3.0, Math.min(5.0, 3.0 + (avgHours / 8) * 2));
+            if (items[0] && items[0].recordDate) {
+                evaluatedDate = new Date(items[0].recordDate).toLocaleDateString();
+            }
+        }
+    } catch (error) {
+    }
+
+    const roundedScore = Number(score.toFixed(1));
+    const fullStars = Math.max(1, Math.min(5, Math.round(roundedScore)));
+    const stars = '★'.repeat(fullStars) + '☆'.repeat(5 - fullStars);
     
     if (scoreEl) {
-        animateScore(scoreEl, 0, evaluationData.score, 800);
+        animateScore(scoreEl, 0, roundedScore, 800);
     }
     
     if (starsEl) {
         setTimeout(() => {
-            starsEl.textContent = evaluationData.stars;
+            starsEl.textContent = stars;
         }, 800);
     }
     
     if (dateEl) {
-        dateEl.textContent = `Last evaluated: ${evaluationData.date}`;
+        dateEl.textContent = `Last evaluated: ${evaluatedDate}`;
+    }
+}
+
+async function loadEmployeeSummary() {
+    const latestTimeInEl = document.getElementById('latestTimeIn');
+    const leaveCreditsEl = document.getElementById('leaveCredits');
+
+    let latestTimeInText = 'No recent login';
+    let remainingCredits = 15;
+
+    try {
+        const todayResponse = await fetch('/api/attendance/today');
+        if (todayResponse.ok) {
+            const todayPayload = await todayResponse.json();
+            if (todayPayload.timeIn) {
+                latestTimeInText = new Date(todayPayload.timeIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            }
+        }
+    } catch (error) {
+    }
+
+    try {
+        const leaveResponse = await fetch('/api/leave-requests?mode=history');
+        if (leaveResponse.ok) {
+            const leavePayload = await leaveResponse.json();
+            const approvedSickDays = (leavePayload.items || []).reduce(function (acc, item) {
+                const isApproved = String(item.status || '').toLowerCase() === 'approved';
+                const isSick = String(item.leaveType || '').toLowerCase().includes('sick');
+                return acc + (isApproved && isSick ? Number(item.numDays || 0) : 0);
+            }, 0);
+            remainingCredits = Math.max(0, 15 - approvedSickDays);
+        }
+    } catch (error) {
+    }
+
+    if (latestTimeInEl) {
+        latestTimeInEl.textContent = latestTimeInText;
+    }
+    if (leaveCreditsEl) {
+        leaveCreditsEl.textContent = `Remaining: ${remainingCredits} Days`;
     }
 }
 

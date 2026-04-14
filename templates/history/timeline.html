@@ -418,7 +418,7 @@
 			logoToggle.onclick = () => sidebar.classList.toggle('collapsed');
 		}
 
-		const storageKey = 'positionChangeRequests';
+		const apiEndpoint = '/api/position-requests';
 		const employeeParam = new URLSearchParams(window.location.search).get('employee') || '';
 		const pendingBody = document.getElementById('pendingBody');
 		const historyBody = document.getElementById('historyBody');
@@ -434,13 +434,29 @@
 			history: document.getElementById('historyPanel')
 		};
 
-		function safeParseRecords() {
-			try {
-				const parsed = JSON.parse(localStorage.getItem(storageKey) || '[]');
-				return Array.isArray(parsed) ? parsed : [];
-			} catch (error) {
+		async function fetchRecords() {
+			const params = new URLSearchParams();
+			params.set('mode', 'all');
+			if (employeeParam) {
+				params.set('employee', employeeParam);
+			}
+
+			const response = await fetch(`${apiEndpoint}?${params.toString()}`);
+			if (!response.ok) {
 				return [];
 			}
+
+			const payload = await response.json();
+			return (payload.items || []).map(item => ({
+				employeeName: item.employeeName,
+				currentPosition: item.currentPosition,
+				requestedPosition: item.requestedPosition,
+				effectiveDate: item.effectiveDate,
+				currentDepartment: item.currentDepartment,
+				reason: item.reason,
+				submittedAt: item.submittedAt,
+				status: item.status
+			}));
 		}
 
 		function formatDateTime(value) {
@@ -555,9 +571,11 @@
 			});
 		});
 
-		const allRecords = safeParseRecords().filter(matchEmployee);
-		updateEmployeeChip();
-		renderTabs(allRecords);
+		(async () => {
+			const allRecords = await fetchRecords();
+			updateEmployeeChip();
+			renderTabs(allRecords.filter(matchEmployee));
+		})();
 	</script>
 </body>
 </html>

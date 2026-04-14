@@ -3,76 +3,54 @@
 const coordinatorName = 'HR Training';
 
 let activeTrainingId = null;
-
-let trainingData = [
-    {
-        id: '001',
-        name: 'Outcomes-Based Education Workshop',
-        category: 'Teaching',
-        date: '03/12/2026',
-        mode: 'Onsite',
-        slotsText: '25 / 30',
-        filled: 25,
-        total: 30,
-        progress: 'Enrollment open',
-        status: 'open',
-        statusLabel: 'Open',
-        remarks: 'Workshop on OBE implementation for faculty.',
-        venue: 'Main building, 2nd floor',
-        trainer: 'CCS Training Team'
-    },
-    {
-        id: '002',
-        name: 'Research Writing Seminar',
-        category: 'Research',
-        date: '03/20/2026',
-        mode: 'Online',
-        slotsText: '30 / 30',
-        filled: 30,
-        total: 30,
-        progress: 'At capacity',
-        status: 'full',
-        statusLabel: 'Full',
-        remarks: 'Publication skills and grant writing basics.',
-        venue: 'Zoom',
-        trainer: 'Dr. Santos'
-    },
-    {
-        id: '003',
-        name: 'Faculty Development Program',
-        category: 'Development',
-        date: '02/28/2026',
-        mode: 'Onsite',
-        slotsText: '20 / 20',
-        filled: 20,
-        total: 20,
-        progress: 'Completed',
-        status: 'completed',
-        statusLabel: 'Completed',
-        remarks: 'Annual faculty development seminar concluded.',
-        venue: 'Auditorium',
-        trainer: 'External Agency'
-    },
-    {
-        id: '004',
-        name: 'Safety & Emergency Response Training',
-        category: 'Safety',
-        date: '03/05/2026',
-        mode: 'Onsite',
-        slotsText: '15 / 25',
-        filled: 15,
-        total: 25,
-        progress: 'Session cancelled',
-        status: 'cancelled',
-        statusLabel: 'Cancelled',
-        remarks: 'Cancelled due to venue unavailability.',
-        venue: 'Gymnasium',
-        trainer: 'Safety Officer'
-    }
-];
+let trainingData = [];
 
 function isFinalTrainingStatus(status) {
     return status === 'completed' || status === 'cancelled';
+}
+
+function normalizeTrainingStatus(status) {
+    const value = String(status || '').toLowerCase();
+    if (value === 'completed' || value === 'cancelled' || value === 'full') {
+        return value;
+    }
+    return 'open';
+}
+
+function mapTraining(item) {
+    return {
+        id: String(item.id),
+        name: item.title,
+        category: item.category,
+        date: item.date,
+        mode: item.mode || item.type,
+        slotsText: item.slotsText,
+        filled: item.filled,
+        total: item.total,
+        progress: item.progress,
+        status: normalizeTrainingStatus(item.status),
+        statusLabel: item.statusLabel,
+        remarks: item.remarks,
+        venue: item.venue,
+        trainer: item.trainer,
+        description: item.description,
+        location: item.location,
+        contact: item.contact,
+    };
+}
+
+async function refreshTrainingData() {
+    try {
+        const response = await fetch('/api/trainings');
+        if (!response.ok) {
+            throw new Error('Failed to load trainings');
+        }
+
+        const payload = await response.json();
+        trainingData = (payload.items || []).map(mapTraining);
+    } catch (error) {
+        trainingData = [];
+    }
 }
 
 function showToast(type, title, message) {
@@ -201,34 +179,39 @@ function closeViewModal() {
     document.getElementById('viewModal').style.display = 'none';
 }
 
-function processTraining(id, decision) {
+async function processTraining(id, decision) {
     const idx = trainingData.findIndex(function (x) { return x.id === id; });
     if (idx === -1) return;
 
     const t = trainingData[idx];
-    const dateStr = new Date().toLocaleDateString();
+    const formData = new FormData();
+    formData.set('decision', decision.toLowerCase());
+    formData.set('remarks', document.getElementById('modalRemarks').innerText.trim());
 
-    if (decision === 'Completed') {
-        t.status = 'completed';
-        t.statusLabel = 'Completed';
-        t.progress = 'Completed';
-        t.remarks = 'Marked completed on ' + dateStr + '.';
-        showToast('approved', 'Training Completed', '"' + t.name + '" has been marked completed.');
-    } else {
-        t.status = 'cancelled';
-        t.statusLabel = 'Cancelled';
-        t.progress = 'Session cancelled';
-        t.remarks = 'Cancelled on ' + dateStr + '.';
-        showToast('rejected', 'Training Cancelled', '"' + t.name + '" has been cancelled.');
+    try {
+        const response = await fetch('/api/trainings/' + t.id + '/decision', {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({ detail: 'Unable to update training.' }));
+            showToast('info', 'Update Failed', err.detail || 'Unable to update training.');
+            return;
+        }
+
+        await refreshTrainingData();
+        renderTable();
+
+        if (decision === 'Completed') {
+            showToast('approved', 'Training Completed', '"' + t.name + '" has been marked completed.');
+        } else {
+            showToast('rejected', 'Training Cancelled', '"' + t.name + '" has been cancelled.');
+        }
+        closeViewModal();
+    } catch (error) {
+        showToast('info', 'Update Failed', 'Unable to update training right now.');
     }
-
-    document.getElementById('modalStatusContainer').innerHTML =
-        '<span class="status-pill ' + t.status + '">' + t.statusLabel + '</span>';
-    document.getElementById('modalProgress').innerText = t.progress;
-    document.getElementById('modalRemarks').innerText = t.remarks;
-    document.getElementById('modalActions').style.display = 'none';
-
-    renderTable();
 }
 
 function resetAddTrainingForm() {
@@ -251,7 +234,12 @@ function padId(num) {
     return String(num).padStart(3, '0');
 }
 
-document.addEventListener('DOMContentLoaded', function () {
+function formatDateForApi(value) {
+    if (!value) return '';
+    return value;
+}
+
+document.addEventListener('DOMContentLoaded', async function () {
     const sidebar = document.getElementById('sidebar');
     const logoToggle = document.getElementById('logoToggle');
     const closeBtn = document.getElementById('closeBtn');
@@ -269,7 +257,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     if (openAddTrainingModal) {
         openAddTrainingModal.addEventListener('click', function () {
-        addModal.style.display = 'flex';
+            addModal.style.display = 'flex';
         });
     }
 
@@ -287,7 +275,7 @@ document.addEventListener('DOMContentLoaded', function () {
         renderTable();
     });
 
-    document.getElementById('saveTraining').addEventListener('click', function () {
+    document.getElementById('saveTraining').addEventListener('click', async function () {
         var name = document.getElementById('tName').value.trim();
         var category = document.getElementById('tCategory').value;
         var mode = document.getElementById('tMode').value;
@@ -319,36 +307,38 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
-        var d = new Date(dateVal + 'T12:00:00');
-        var dateDisplay = (d.getMonth() + 1).toString().padStart(2, '0') + '/' +
-            d.getDate().toString().padStart(2, '0') + '/' + d.getFullYear();
+        const payload = new FormData();
+        payload.set('title', name);
+        payload.set('category', category);
+        payload.set('training_type', mode);
+        payload.set('training_date', formatDateForApi(dateVal));
+        payload.set('description', remarks || name);
+        payload.set('provider', trainer || 'HR Training');
+        payload.set('location', venue || '—');
+        payload.set('contact', '—');
+        payload.set('total_slots', String(totalSlots));
+        payload.set('remarks', remarks || 'New training session created.');
 
-        var nextNum = trainingData.reduce(function (max, x) {
-            var n = parseInt(x.id, 10);
-            return n > max ? n : max;
-        }, 0) + 1;
+        try {
+            const response = await fetch('/api/trainings', {
+                method: 'POST',
+                body: payload,
+            });
 
-        trainingData.push({
-            id: padId(nextNum),
-            name: name,
-            category: category,
-            date: dateDisplay,
-            mode: mode,
-            slotsText: '0 / ' + totalSlots,
-            filled: 0,
-            total: totalSlots,
-            progress: 'Enrollment open',
-            status: 'open',
-            statusLabel: 'Open',
-            remarks: remarks || 'New training session created.',
-            venue: venue || '—',
-            trainer: trainer || '—'
-        });
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({ detail: 'Unable to save training.' }));
+                showToast('info', 'Save Failed', err.detail || 'Unable to save training.');
+                return;
+            }
 
-        addModal.style.display = 'none';
-        resetAddTrainingForm();
-        renderTable();
-        showToast('info', 'Training Added', '"' + name + '" has been scheduled.');
+            await refreshTrainingData();
+            addModal.style.display = 'none';
+            resetAddTrainingForm();
+            renderTable();
+            showToast('info', 'Training Added', '"' + name + '" has been scheduled.');
+        } catch (error) {
+            showToast('info', 'Save Failed', 'Unable to save training right now.');
+        }
     });
 
     window.addEventListener('click', function (e) {
@@ -376,5 +366,6 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
+    await refreshTrainingData();
     renderTable();
 });

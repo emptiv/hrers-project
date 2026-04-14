@@ -74,6 +74,54 @@ let timerInterval = null;
 let totalSeconds  = 0;
 let isClockedIn   = false;
 
+
+async function refreshAttendanceState() {
+
+    try {
+
+        const response = await fetch('/api/attendance/today');
+
+        if (!response.ok) return;
+
+        const payload = await response.json();
+
+        isClockedIn = !!payload.clockedIn;
+
+        totalSeconds = Number(payload.workedSeconds || 0);
+
+
+
+        if (clockBtn) {
+
+            clockBtn.innerText = isClockedIn ? 'Clock out' : 'Clock in';
+
+            clockBtn.classList.toggle('is-clocked-in', isClockedIn);
+
+        }
+
+
+
+        if (timeInDisplay) {
+
+            timeInDisplay.innerText = payload.timeIn
+                ? `Time In: ${new Date(payload.timeIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                : 'Time In: --';
+
+        }
+
+
+
+        if (workingTimeDisplay) {
+
+            workingTimeDisplay.innerText = `Working for: ${formatDuration(totalSeconds)}`;
+
+        }
+
+    } catch (error) {
+
+    }
+}
+
 function formatDuration(seconds) {
     const hrs  = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
@@ -85,6 +133,70 @@ function startTimer() {
         totalSeconds++;
         workingTimeDisplay.innerText = `Working for: ${formatDuration(totalSeconds)}`;
     }, 1000);
+}
+
+
+async function clockIn() {
+
+    const response = await fetch('/api/attendance/clock-in', { method: 'POST' });
+
+    if (!response.ok) return false;
+
+
+
+    isClockedIn = true;
+
+    clockBtn.innerText = 'Clock out';
+
+    clockBtn.classList.add('is-clocked-in');
+
+
+
+    const now = new Date();
+
+    timeInDisplay.innerText = `Time In: ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+
+
+
+    startTimer();
+
+    return true;
+}
+
+
+async function clockOut() {
+
+    const response = await fetch('/api/attendance/clock-out', { method: 'POST' });
+
+    if (!response.ok) return false;
+
+
+
+    const payload = await response.json();
+
+    const durationLabel = formatDuration(Number(payload.attendance?.workedSeconds || totalSeconds));
+
+
+
+    isClockedIn = false;
+
+    clearInterval(timerInterval);
+
+    timerInterval = null;
+
+    totalSeconds = 0;
+
+    clockBtn.innerText = 'Clock in';
+
+    clockBtn.classList.remove('is-clocked-in');
+
+    workingTimeDisplay.innerText = 'Working for: 0h 00m';
+
+    timeInDisplay.innerText = 'Time In: --';
+
+    showClockOutSuccess(durationLabel);
+
+    return true;
 }
 
 function showClockOutOverlay() {
@@ -127,19 +239,14 @@ function completeClockOut() {
 
 clockBtn.addEventListener("click", () => {
     if (!isClockedIn) {
-        isClockedIn = true;
-        clockBtn.innerText = "Clock out";
-        clockBtn.classList.add("is-clocked-in");
-        const now = new Date();
-        timeInDisplay.innerText = `Time In: ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-        startTimer();
+        clockIn();
     } else {
         showClockOutOverlay();
     }
 });
 
 clockOutCancelBtn.addEventListener("click", hideClockOutOverlay);
-clockOutConfirmBtn.addEventListener("click", () => { completeClockOut(); });
+clockOutConfirmBtn.addEventListener("click", () => { clockOut(); });
 clockOutDismissBtn.addEventListener("click", hideClockOutOverlay);
 
 clockOutOverlay.addEventListener("click", (e) => {
@@ -203,11 +310,20 @@ let currentView = "weekly";
 let weekOffset  = 0;
 let monthOffset = 0;
 
+let weeklySummaryData = null;
+let monthlySummaryData = null;
+
+async function loadAttendanceSummary(view, offset) {
+    const response = await fetch(`/api/attendance/summary?view=${encodeURIComponent(view)}&offset=${encodeURIComponent(offset)}`);
+    if (!response.ok) return null;
+    return await response.json();
+}
+
 
 /* ── 6. HISTORY MODAL – RENDER WEEKLY ───────────────────── */
 
 function renderWeekly() {
-    const data = weeklyData[weekOffset] ?? weeklyData[0];
+    const data = weeklySummaryData ?? weeklyData[weekOffset] ?? weeklyData[0];
     historyDateRange.textContent = data.label;
     totalHoursCount.textContent  = data.total;
     const rows = data.rows.map(r => `
@@ -227,7 +343,7 @@ function renderWeekly() {
 /* ── 7. HISTORY MODAL – RENDER MONTHLY ──────────────────── */
 
 function renderMonthly() {
-    const data = monthlyData[monthOffset] ?? monthlyData[0];
+    const data = monthlySummaryData ?? monthlyData[monthOffset] ?? monthlyData[0];
     historyDateRange.textContent = data.label;
     totalHoursCount.textContent  = data.total;
     const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -243,19 +359,21 @@ function renderMonthly() {
 
 /* ── 8. HISTORY MODAL – VIEW SWITCHER ───────────────────── */
 
-function switchView(view) {
+async function switchView(view) {
     currentView = view;
     if (view === "weekly") {
         weeklyViewBtn.classList.add("active");
         monthlyViewBtn.classList.remove("active");
         weeklyTable.style.display = "table";
         monthlyGrid.classList.remove("active");
+        weeklySummaryData = await loadAttendanceSummary('weekly', weekOffset);
         renderWeekly();
     } else {
         monthlyViewBtn.classList.add("active");
         weeklyViewBtn.classList.remove("active");
         weeklyTable.style.display = "none";
         monthlyGrid.classList.add("active");
+        monthlySummaryData = await loadAttendanceSummary('monthly', monthOffset);
         renderMonthly();
     }
 }
@@ -267,13 +385,35 @@ monthlyViewBtn.addEventListener("click", () => switchView("monthly"));
 /* ── 9. HISTORY MODAL – NAVIGATION ──────────────────────── */
 
 prevPeriodBtn.addEventListener("click", () => {
-    if (currentView === "weekly") { weekOffset++; renderWeekly(); } 
-    else { monthOffset++; renderMonthly(); }
+    if (currentView === "weekly") {
+        weekOffset++;
+        loadAttendanceSummary('weekly', weekOffset).then(function (data) {
+            weeklySummaryData = data;
+            renderWeekly();
+        });
+    } else {
+        monthOffset++;
+        loadAttendanceSummary('monthly', monthOffset).then(function (data) {
+            monthlySummaryData = data;
+            renderMonthly();
+        });
+    }
 });
 
 nextPeriodBtn.addEventListener("click", () => {
-    if (currentView === "weekly") { weekOffset--; renderWeekly(); } 
-    else { monthOffset--; renderMonthly(); }
+    if (currentView === "weekly") {
+        weekOffset--;
+        loadAttendanceSummary('weekly', weekOffset).then(function (data) {
+            weeklySummaryData = data;
+            renderWeekly();
+        });
+    } else {
+        monthOffset--;
+        loadAttendanceSummary('monthly', monthOffset).then(function (data) {
+            monthlySummaryData = data;
+            renderMonthly();
+        });
+    }
 });
 
 
@@ -296,7 +436,6 @@ if (tabLog && tabMonit) {
         if(logContent) logContent.style.display = 'block';
         if(monitContent) monitContent.style.display = 'none';
 
-        console.log("Switching to Attendance Log");
     });
 
     tabMonit.addEventListener('click', function () {
@@ -307,7 +446,7 @@ if (tabLog && tabMonit) {
         if(monitContent) monitContent.style.display = 'block';
         if(logContent) logContent.style.display = 'none';
 
-        console.log("Switching to Attendance Monitoring");
+        window.location.href = '/templates/head/head_attendancemonitoring.html';
     });
 }
 
@@ -317,4 +456,4 @@ if (tabLog && tabMonit) {
 function capitalize(str) { return str.charAt(0).toUpperCase() + str.slice(1); }
 
 // Initialize
-switchView("weekly");
+refreshAttendanceState().then(() => switchView("weekly"));

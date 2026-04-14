@@ -165,6 +165,58 @@ let totalSeconds  = 0;
 let isClockedIn   = false;
 
 
+async function refreshAttendanceState() {
+
+    try {
+
+        const response = await fetch('/api/attendance/today');
+
+        if (!response.ok) return;
+
+        const payload = await response.json();
+
+        isClockedIn = !!payload.clockedIn;
+
+        totalSeconds = Number(payload.workedSeconds || 0);
+
+
+
+        if (clockBtn) {
+
+            clockBtn.innerText = isClockedIn ? 'Clock out' : 'Clock in';
+
+            clockBtn.classList.toggle('is-clocked-in', isClockedIn);
+
+        }
+
+
+
+        if (timeInDisplay) {
+
+            timeInDisplay.innerText = payload.timeIn
+
+                ? `Time In: ${new Date(payload.timeIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+
+                : 'Time In: --';
+
+        }
+
+
+
+        if (workingTimeDisplay) {
+
+            workingTimeDisplay.innerText = `Working for: ${formatDuration(totalSeconds)}`;
+
+        }
+
+    } catch (error) {
+
+        // Keep the current UI state if the backend is temporarily unavailable.
+
+    }
+}
+
+
 
 function formatDuration(seconds) {
 
@@ -188,6 +240,70 @@ function startTimer() {
 
     }, 1000);
 
+}
+
+
+async function clockIn() {
+
+    const response = await fetch('/api/attendance/clock-in', { method: 'POST' });
+
+    if (!response.ok) return false;
+
+
+
+    isClockedIn = true;
+
+    clockBtn.innerText = 'Clock out';
+
+    clockBtn.classList.add('is-clocked-in');
+
+
+
+    const now = new Date();
+
+    timeInDisplay.innerText = `Time In: ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+
+
+
+    startTimer();
+
+    return true;
+}
+
+
+async function clockOut() {
+
+    const response = await fetch('/api/attendance/clock-out', { method: 'POST' });
+
+    if (!response.ok) return false;
+
+
+
+    const payload = await response.json();
+
+    const durationLabel = formatDuration(Number(payload.attendance?.workedSeconds || totalSeconds));
+
+
+
+    isClockedIn = false;
+
+    clearInterval(timerInterval);
+
+    timerInterval = null;
+
+    totalSeconds = 0;
+
+    clockBtn.innerText = 'Clock in';
+
+    clockBtn.classList.remove('is-clocked-in');
+
+    workingTimeDisplay.innerText = 'Working for: 0h 00m';
+
+    timeInDisplay.innerText = 'Time In: --';
+
+    showClockOutSuccess(durationLabel);
+
+    return true;
 }
 
 
@@ -272,21 +388,7 @@ clockBtn.addEventListener("click", () => {
 
     if (!isClockedIn) {
 
-        isClockedIn = true;
-
-        clockBtn.innerText = "Clock out";
-
-        clockBtn.classList.add("is-clocked-in");
-
-
-
-        const now = new Date();
-
-        timeInDisplay.innerText = `Time In: ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-
-
-
-        startTimer();
+        clockIn();
 
     } else {
 
@@ -304,7 +406,7 @@ clockOutCancelBtn.addEventListener("click", hideClockOutOverlay);
 
 clockOutConfirmBtn.addEventListener("click", () => {
 
-    completeClockOut();
+    clockOut();
 
 });
 
@@ -542,6 +644,20 @@ let weekOffset  = 0;
 
 let monthOffset = 0;
 
+let weeklySummaryData = null;
+
+let monthlySummaryData = null;
+
+
+async function loadAttendanceSummary(view, offset) {
+
+    const response = await fetch(`/api/attendance/summary?view=${encodeURIComponent(view)}&offset=${encodeURIComponent(offset)}`);
+
+    if (!response.ok) return null;
+
+    return await response.json();
+}
+
 
 
 
@@ -552,7 +668,7 @@ let monthOffset = 0;
 
 function renderWeekly() {
 
-    const data = weeklyData[weekOffset] ?? weeklyData[0];
+    const data = weeklySummaryData ?? weeklyData[weekOffset] ?? weeklyData[0];
 
     historyDateRange.textContent = data.label;
 
@@ -610,7 +726,7 @@ function renderWeekly() {
 
 function renderMonthly() {
 
-    const data = monthlyData[monthOffset] ?? monthlyData[0];
+    const data = monthlySummaryData ?? monthlyData[monthOffset] ?? monthlyData[0];
 
     historyDateRange.textContent = data.label;
 
@@ -682,7 +798,7 @@ function renderMonthly() {
 
 
 
-function switchView(view) {
+async function switchView(view) {
 
     currentView = view;
 
@@ -698,6 +814,8 @@ function switchView(view) {
 
         monthlyGrid.classList.remove("active");
 
+        weeklySummaryData = await loadAttendanceSummary('weekly', weekOffset);
+
         renderWeekly();
 
     } else {
@@ -709,6 +827,8 @@ function switchView(view) {
         weeklyTable.style.display = "none";
 
         monthlyGrid.classList.add("active");
+
+        monthlySummaryData = await loadAttendanceSummary('monthly', monthOffset);
 
         renderMonthly();
 
@@ -734,15 +854,21 @@ prevPeriodBtn.addEventListener("click", () => {
 
     if (currentView === "weekly") {
 
-        weekOffset = Math.min(weekOffset + 1, Object.keys(weeklyData).length - 1);
+        weekOffset++;
 
-        renderWeekly();
+        loadAttendanceSummary('weekly', weekOffset).then(function (data) {
+            weeklySummaryData = data;
+            renderWeekly();
+        });
 
     } else {
 
-        monthOffset = Math.min(monthOffset + 1, Object.keys(monthlyData).length - 1);
+        monthOffset++;
 
-        renderMonthly();
+        loadAttendanceSummary('monthly', monthOffset).then(function (data) {
+            monthlySummaryData = data;
+            renderMonthly();
+        });
 
     }
 
@@ -754,15 +880,21 @@ nextPeriodBtn.addEventListener("click", () => {
 
     if (currentView === "weekly") {
 
-        weekOffset = Math.max(weekOffset - 1, 0);
+        weekOffset--;
 
-        renderWeekly();
+        loadAttendanceSummary('weekly', weekOffset).then(function (data) {
+            weeklySummaryData = data;
+            renderWeekly();
+        });
 
     } else {
 
-        monthOffset = Math.max(monthOffset - 1, 0);
+        monthOffset--;
 
-        renderMonthly();
+        loadAttendanceSummary('monthly', monthOffset).then(function (data) {
+            monthlySummaryData = data;
+            renderMonthly();
+        });
 
     }
 
@@ -822,6 +954,6 @@ function capitalize(str) {
 
 // Boot the modal in weekly view
 
-switchView("weekly");
+refreshAttendanceState().then(() => switchView("weekly"));
 
 

@@ -54,7 +54,30 @@ document.addEventListener("DOMContentLoaded", function () {
         updateRequirements();
         clearError();
         form.reset();
-        alert("Password updated successfully.");
+        if (window.Swal && typeof window.Swal.fire === "function") {
+            window.Swal.fire({
+                icon: "success",
+                title: "Password Updated",
+                text: "Password updated successfully.",
+                confirmButtonColor: "#4a1d1d",
+            });
+        } else {
+            const toast = document.createElement("div");
+            toast.style.position = "fixed";
+            toast.style.top = "20px";
+            toast.style.right = "20px";
+            toast.style.zIndex = "9999";
+            toast.style.background = "#4a1d1d";
+            toast.style.color = "#fff";
+            toast.style.padding = "10px 14px";
+            toast.style.borderRadius = "8px";
+            toast.style.fontSize = "0.9rem";
+            toast.textContent = "Password updated successfully.";
+            document.body.appendChild(toast);
+            setTimeout(function () {
+                toast.remove();
+            }, 2200);
+        }
     });
 
     [currentPassword, newPassword, confirmPassword].forEach(function (field) {

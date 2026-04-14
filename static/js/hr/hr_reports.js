@@ -215,7 +215,7 @@ function closeModal(modal) {
    CUSTOM REPORT PREVIEW
    ================================= */
 
-function updateReportPreview() {
+async function updateReportPreview() {
     const reportType = document.querySelector('input[name="reportType"]:checked');
     const school = document.getElementById('customSchool').value;
     const startDate = document.getElementById('customDateStart').value;
@@ -235,7 +235,16 @@ function updateReportPreview() {
         return;
     }
     
-    const reportData = generateMockReportData(reportType.value, school, checkedFields);
+    let reportData = [];
+    try {
+        const response = await fetch(`/api/reports/preview?reportType=${encodeURIComponent(reportType.value)}&school=${encodeURIComponent(school)}`);
+        if (response.ok) {
+            const payload = await response.json();
+            reportData = payload.items || [];
+        }
+    } catch (error) {
+        reportData = [];
+    }
     
     previewContainer.innerHTML = `
         <div class="preview-content">
@@ -277,122 +286,99 @@ function getSchoolName(schoolCode) {
     return schools[schoolCode] || 'All Schools';
 }
 
-function generateMockReportData(reportType, school, fields) {
-    const mockData = [
-        {
-            'employee-id': 'EMP001',
-            'name': 'John Doe',
-            'school': 'Computer Science',
-            'email': 'john.doe@company.com',
-            'phone': '+1-555-0101',
-            'salary': '$75,000',
-            'attendance': '98%',
-            'days-used': '5',
-            'rating': '8.5/10'
-        },
-        {
-            'employee-id': 'EMP002',
-            'name': 'Jane Smith',
-            'school': 'Engineering',
-            'email': 'jane.smith@company.com',
-            'phone': '+1-555-0102',
-            'salary': '$85,000',
-            'attendance': '96%',
-            'days-used': '3',
-            'rating': '9.0/10'
-        },
-        {
-            'employee-id': 'EMP003',
-            'name': 'Mike Johnson',
-            'school': 'Nursing',
-            'email': 'mike.j@company.com',
-            'phone': '+1-555-0103',
-            'salary': '$80,000',
-            'attendance': '97%',
-            'days-used': '4',
-            'rating': '8.2/10'
-        },
-        {
-            'employee-id': 'EMP004',
-            'name': 'Sarah Williams',
-            'school': 'Criminology',
-            'email': 'sarah.w@company.com',
-            'phone': '+1-555-0104',
-            'salary': '$70,000',
-            'attendance': '95%',
-            'days-used': '6',
-            'rating': '7.8/10'
-        },
-        {
-            'employee-id': 'EMP005',
-            'name': 'Emma Brown',
-            'school': 'Education',
-            'email': 'emma.b@company.com',
-            'phone': '+1-555-0105',
-            'salary': '$72,000',
-            'attendance': '99%',
-            'days-used': '2',
-            'rating': '8.9/10'
-        }
-    ];
-    
-    return mockData.filter(item => 
-        school === 'all' || item['school'].toLowerCase().replace(/\s+/g, '-') === school
-    ).slice(0, 5);
+function getSelectedReportConfig() {
+    const reportType = document.querySelector('input[name="reportType"]:checked');
+    const school = document.getElementById('customSchool')?.value || 'all';
+    const fields = Array.from(document.querySelectorAll('.checkbox-item input[type="checkbox"]:checked'))
+        .map(cb => cb.nextElementSibling.innerText.toLowerCase().replace(/\s+/g, '-'));
+
+    return { reportType, school, fields };
 }
 
-function handleGenerateReport() {
-    const reportType = document.querySelector('input[name="reportType"]:checked');
-    if (!reportType) {
+async function downloadReportExport(triggerLabel) {
+    const config = getSelectedReportConfig();
+    if (!config.reportType) {
+        showToast('warning', 'Please select a report type', 'No report type selected');
+        return false;
+    }
+    
+    const params = new URLSearchParams({
+        reportType: config.reportType.value,
+        school: config.school,
+        fields: config.fields.join(','),
+    });
+
+    const response = await fetch(`/api/reports/export?${params.toString()}`);
+    if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({ detail: 'Unable to export report.' }));
+        throw new Error(errorPayload.detail || 'Unable to export report.');
+    }
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${config.reportType.value}_${config.school}_${triggerLabel}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+    return true;
+}
+
+async function handleGenerateReport() {
+    const config = getSelectedReportConfig();
+    if (!config.reportType) {
         showToast('warning', 'Please select a report type', 'No report type selected');
         return;
     }
-    
-    // Show loading toast
-    const toastId = showToast('info', 'Generating report...', 'Please wait while we generate your report', true);
-    
-    // Simulate report generation
-    setTimeout(() => {
+
+    const toastId = showToast('info', 'Generating report...', 'Preparing a live CSV export', true);
+    try {
+        await downloadReportExport('generated');
         removeToast(toastId);
-        showToast('success', 'Report generated successfully!', `Your ${reportType.nextElementSibling.innerText} report is ready`, false, 3000);
-    }, 2000);
+        showToast('success', 'Report generated successfully!', `Your ${config.reportType.nextElementSibling.innerText} report has been downloaded`, false, 3000);
+    } catch (error) {
+        removeToast(toastId);
+        showToast('error', 'Report generation failed', error.message || 'Unable to export report', false, 3000);
+    }
 }
 
-function handlePreviewExport() {
-    const reportType = document.querySelector('input[name="reportType"]:checked');
-    if (!reportType) {
+async function handlePreviewExport() {
+    const config = getSelectedReportConfig();
+    if (!config.reportType) {
         showToast('warning', 'Please select a report type', 'No report type selected');
         return;
     }
-    
-    // Show loading toast
+
     const toastId = showToast('info', 'Downloading report...', 'Your report is being prepared for download', true);
-    
-    // Simulate export
-    setTimeout(() => {
+    try {
+        await downloadReportExport('preview');
         removeToast(toastId);
         showToast('success', 'Report downloaded!', 'Your report has been saved to downloads', false, 3000);
-    }, 2500);
+    } catch (error) {
+        removeToast(toastId);
+        showToast('error', 'Download failed', error.message || 'Unable to export report', false, 3000);
+    }
 }
 
 /* =================================
    EXPORT FUNCTIONALITY
    ================================= */
 
-function handleExport() {
-    const format = document.querySelector('input[name="exportFormat"]:checked').value;
-    const includeCharts = document.getElementById('includeCharts').checked;
-    const includeSummary = document.getElementById('includeSummary').checked;
-    
-    // Show loading toast
-    const toastId = showToast('info', 'Exporting report...', `Preparing ${format.toUpperCase()} file`, true);
-    
-    // Simulate file export
-    setTimeout(() => {
+async function handleExport() {
+    const format = document.querySelector('input[name="exportFormat"]:checked')?.value || 'csv';
+    const toastId = showToast('info', 'Exporting report...', 'Preparing a live CSV download', true);
+
+    try {
+        await downloadReportExport(format);
         removeToast(toastId);
-        showToast('success', 'Export complete!', `Report exported as ${format.toUpperCase()}`, false, 3000);
+        showToast('success', 'Export complete!', 'Report exported as CSV', false, 3000);
         closeModal(document.getElementById('exportModal'));
-    }, 2500);
+    } catch (error) {
+        removeToast(toastId);
+        showToast('error', 'Export failed', error.message || 'Unable to export report', false, 3000);
+    }
 }
 
 /* =================================
@@ -400,13 +386,11 @@ function handleExport() {
    ================================= */
 
 function handleDateRangeChange(range) {
-    console.log(`Date range changed to: ${range}`);
     // Update charts and data based on date range
     updateChartsWithDateRange(range);
 }
 
 function handleSchoolChange(school) {
-    console.log(`School changed to: ${school}`);
     // Update charts and data based on school
     updateChartsWithSchool(school);
 }
@@ -588,12 +572,10 @@ function initializeDepartmentChart() {
 
 function updateChartsWithDateRange(range) {
     // This function would update chart data based on selected date range
-    console.log('Charts updated for date range:', range);
 }
 
 function updateChartsWithSchool(school) {
     // This function would update chart data based on selected school
-    console.log('Charts updated for school:', school);
 }
 
 /* =================================
@@ -601,21 +583,32 @@ function updateChartsWithSchool(school) {
    ================================= */
 
 function loadDashboardData() {
-    // Load KPI data
     loadKPIData();
 }
 
-function loadKPIData() {
-    // Simulate API call to load KPI data
+async function loadKPIData() {
     const totalEmployees = document.getElementById('totalEmployees');
     const attendanceRate = document.getElementById('attendanceRate');
     const turnoverRate = document.getElementById('turnoverRate');
     const avgPerformance = document.getElementById('avgPerformance');
-    
-    if (totalEmployees) totalEmployees.textContent = '450';
-    if (attendanceRate) attendanceRate.textContent = '94.5%';
-    if (turnoverRate) turnoverRate.textContent = '3.2%';
-    if (avgPerformance) avgPerformance.textContent = '8.2/10';
+
+    try {
+        const response = await fetch('/api/reports/kpi');
+        if (!response.ok) {
+            throw new Error('Failed to load KPI data');
+        }
+
+        const kpi = await response.json();
+        if (totalEmployees) totalEmployees.textContent = String(kpi.totalEmployees ?? 0);
+        if (attendanceRate) attendanceRate.textContent = `${Number(kpi.attendanceRate ?? 0).toFixed(1)}%`;
+        if (turnoverRate) turnoverRate.textContent = `${Number(kpi.turnoverRate ?? 0).toFixed(2)}%`;
+        if (avgPerformance) avgPerformance.textContent = `${Number(kpi.avgPerformance ?? 0).toFixed(1)}/10`;
+    } catch (error) {
+        if (totalEmployees) totalEmployees.textContent = '0';
+        if (attendanceRate) attendanceRate.textContent = '0.0%';
+        if (turnoverRate) turnoverRate.textContent = '0.00%';
+        if (avgPerformance) avgPerformance.textContent = '0.0/10';
+    }
 }
 
 /* =================================
