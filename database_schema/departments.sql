@@ -18,3 +18,16 @@ CREATE TABLE IF NOT EXISTS departments (
         ON DELETE SET NULL
         ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Seed departments (run users.sql first so referenced usernames exist)
+INSERT INTO departments (name, email, location, budget, head_user_id, is_active) VALUES
+('Academics', 'academics@school.edu', 'Main Building - 2F', 350000.00, (SELECT id FROM users WHERE username = 'dept_head_acad' LIMIT 1), 1),
+('Information Technology', 'it@school.edu', 'Admin Annex - 1F', 500000.00, (SELECT id FROM users WHERE username = 'dept_head_it' LIMIT 1), 1),
+('Human Resources', 'hr@school.edu', 'Admin Building - 3F', 200000.00, (SELECT id FROM users WHERE username = 'hr_head' LIMIT 1), 1),
+('Finance', 'finance@school.edu', 'Finance Office - Ground Floor', 450000.00, NULL, 1)
+ON DUPLICATE KEY UPDATE
+    email = VALUES(email),
+    location = VALUES(location),
+    budget = VALUES(budget),
+    head_user_id = VALUES(head_user_id),
+    is_active = VALUES(is_active);

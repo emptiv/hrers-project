@@ -724,6 +724,22 @@ def get_user_data(user_id: int, current_user: User = Depends(require_roles(UserR
     first_name, last_name = split_name(str(user.full_name))
     role_value = str(user.role.value)
     role_for_ui = "head" if role_value == "department_head" else ("hr" if role_value in {"hr_head", "hr_evaluator"} else role_value)
+
+    department_id = None
+    if user.role == UserRole.department_head:
+        head_department = db.query(Department).filter(Department.head_user_id == int(user.id), Department.is_active == True).first()
+        department_id = int(head_department.id) if head_department else None
+    else:
+        latest = (
+            db.query(PositionChangeRequest)
+            .filter(PositionChangeRequest.requester_user_id == int(user.id))
+            .order_by(PositionChangeRequest.created_at.desc(), PositionChangeRequest.id.desc())
+            .first()
+        )
+        if latest and latest.current_department:
+            dept = db.query(Department).filter(Department.name == str(latest.current_department), Department.is_active == True).first()
+            department_id = int(dept.id) if dept else None
+
     return {
         "id": user.id,
         "first_name": first_name,
@@ -731,6 +747,7 @@ def get_user_data(user_id: int, current_user: User = Depends(require_roles(UserR
         "email": str(user.email),
         "username": str(user.username),
         "role": role_for_ui,
+        "department_id": department_id,
     }
 
 
@@ -742,6 +759,7 @@ async def create_user(current_user: User = Depends(require_roles(UserRole.admin)
     email = str(form.get("email") or "").strip().lower()
     username = str(form.get("username") or email.split("@")[0] or "").strip()
     role = normalize_role(str(form.get("role") or ""))
+    department_id_raw = str(form.get("department") or form.get("departmentUserModal") or "").strip()
     password = str(form.get("password") or form.get("password1") or "").strip()
     password2 = str(form.get("confirm_password") or form.get("confirmPassword") or form.get("password2") or "").strip()
 
@@ -749,6 +767,8 @@ async def create_user(current_user: User = Depends(require_roles(UserRole.admin)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing required fields")
     if not password or password != password2:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Passwords do not match")
+    if not department_id_raw:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Department is required for this role")
 
     exists = db.query(User).filter((User.email == email) | (User.username == username)).first()
     if exists:
@@ -764,6 +784,33 @@ async def create_user(current_user: User = Depends(require_roles(UserRole.admin)
         must_change_password=True,
     )
     db.add(user)
+    db.flush()
+
+    department: Department | None = None
+    if department_id_raw:
+        try:
+            department_id = int(department_id_raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid department") from exc
+
+        department = db.query(Department).filter(Department.id == department_id, Department.is_active == True).first()
+        if not department:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Department not found")
+
+    if role == UserRole.department_head and department:
+        previous_department = db.query(Department).filter(Department.head_user_id == int(user.id)).first()
+        if previous_department and int(previous_department.id) != int(department.id):
+            previous_department.head_user_id = None
+        department.head_user_id = user.id
+
+    else:
+        previous_department = db.query(Department).filter(Department.head_user_id == int(user.id)).first()
+        if previous_department:
+            previous_department.head_user_id = None
+
+    if department:
+        set_user_department(db, user, str(department.name))
+
     db.commit()
     db.refresh(user)
     return {"message": "User created successfully.", "id": user.id}
@@ -781,8 +828,12 @@ async def edit_user(user_id: int, current_user: User = Depends(require_roles(Use
     email = str(form.get("email") or user.email).strip().lower()
     username = str(form.get("username") or user.username).strip()
     role = normalize_role(str(form.get("role") or user.role.value))
+    department_id_raw = str(form.get("department") or form.get("departmentUserModal") or "").strip()
     password = str(form.get("password") or form.get("password1") or "").strip()
     password2 = str(form.get("confirm_password") or form.get("confirmPassword") or form.get("password2") or "").strip()
+
+    if not department_id_raw:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Department is required for this role")
 
     if first_name and last_name:
         user.full_name = f"{first_name} {last_name}".strip()
@@ -795,6 +846,31 @@ async def edit_user(user_id: int, current_user: User = Depends(require_roles(Use
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Passwords do not match")
         user.hashed_password = hash_password(password)
         user.must_change_password = True
+
+    department: Department | None = None
+    if department_id_raw:
+        try:
+            department_id = int(department_id_raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid department") from exc
+
+        department = db.query(Department).filter(Department.id == department_id, Department.is_active == True).first()
+        if not department:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Department not found")
+
+    if role == UserRole.department_head and department:
+        previous_department = db.query(Department).filter(Department.head_user_id == int(user.id)).first()
+        if previous_department and int(previous_department.id) != int(department.id):
+            previous_department.head_user_id = None
+        department.head_user_id = user.id
+
+    else:
+        previous_department = db.query(Department).filter(Department.head_user_id == int(user.id)).first()
+        if previous_department:
+            previous_department.head_user_id = None
+
+    if department:
+        set_user_department(db, user, str(department.name))
 
     db.commit()
     return {"message": "User updated successfully."}
@@ -1222,6 +1298,47 @@ def build_department_employee_counts(
     return counts
 
 
+def set_user_department(db: Session, user: User, department_name: str) -> None:
+    latest = (
+        db.query(PositionChangeRequest)
+        .filter(PositionChangeRequest.requester_user_id == int(user.id))
+        .order_by(PositionChangeRequest.created_at.desc(), PositionChangeRequest.id.desc())
+        .first()
+    )
+
+    role_label = str(user.role.value).replace("_", " ").title()
+    if latest:
+        latest.current_department = department_name
+        if not latest.current_position:
+            latest.current_position = role_label
+        if not latest.requested_position:
+            latest.requested_position = role_label
+        if latest.status != PositionChangeStatus.approved:
+            latest.status = PositionChangeStatus.approved
+        if not latest.reviewed_by_name:
+            latest.reviewed_by_name = "System"
+        if not latest.review_remarks:
+            latest.review_remarks = "Department updated by admin."
+        return
+
+    db.add(
+        PositionChangeRequest(
+            requester_user_id=int(user.id),
+            employee_name=str(user.full_name),
+            employee_no=str(user.employee_no or "") or None,
+            current_position=role_label,
+            current_department=department_name,
+            requested_position=role_label,
+            effective_date=date.today(),
+            reason="Department assigned by admin.",
+            status=PositionChangeStatus.approved,
+            reviewed_by_user_id=None,
+            reviewed_by_name="System",
+            review_remarks="Department assigned by admin.",
+        )
+    )
+
+
 def format_relative_time(value: datetime | None) -> str:
     if not value:
         return "Unknown"
@@ -1334,8 +1451,12 @@ def list_users_for_admin(current_user: User = Depends(require_roles(UserRole.adm
 
     items = []
     for user in users:
-        latest = latest_position_by_user.get(int(user.id))
-        department_name = (latest.current_department if latest else None) or "Unassigned"
+        if user.role == UserRole.department_head:
+            head_department = db.query(Department).filter(Department.head_user_id == int(user.id), Department.is_active == True).first()
+            department_name = str(head_department.name) if head_department else "Unassigned"
+        else:
+            latest = latest_position_by_user.get(int(user.id))
+            department_name = (latest.current_department if latest else None) or "Unassigned"
         department_id = department_name_to_id.get(str(department_name).lower())
 
         items.append(

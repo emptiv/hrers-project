@@ -56,6 +56,20 @@ function formatDisplayDate(isoString) {
     return date.toLocaleDateString(undefined, { month: 'short', day: '2-digit', year: 'numeric' });
 }
 
+function splitDisplayName(fullName) {
+    const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return { firstName: '', lastName: '' };
+    if (parts.length === 1) return { firstName: parts[0], lastName: '' };
+    return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
+}
+
+function mapRoleForUserModal(roleValue) {
+    const normalizedRole = String(roleValue || '').toLowerCase();
+    if (normalizedRole === 'department_head') return 'head';
+    if (normalizedRole === 'hr_head' || normalizedRole === 'hr_evaluator') return 'hr';
+    return normalizedRole;
+}
+
 function renderUserRows(items) {
     const tableBody = document.getElementById('usersTableBody');
     if (!tableBody) return;
@@ -113,6 +127,7 @@ function renderUserRows(items) {
 function populateDepartmentOptions() {
     const departmentFilter = document.getElementById('departmentFilter');
     const newDepartment = document.getElementById('newDepartment');
+    const departmentUserModal = document.getElementById('departmentUserModal');
 
     const options = departmentDirectory
         .filter((item) => item.isActive)
@@ -125,6 +140,24 @@ function populateDepartmentOptions() {
 
     if (newDepartment) {
         newDepartment.innerHTML = `<option value="">Select Department</option>${options}`;
+    }
+
+    if (departmentUserModal) {
+        departmentUserModal.innerHTML = `<option value="">Select Department</option>${options}`;
+    }
+}
+
+function toggleUserModalDepartment(roleValue) {
+    const deptGroup = document.getElementById('departmentSelectGroupUserModal');
+    const deptSelect = document.getElementById('departmentUserModal');
+    if (!deptGroup || !deptSelect) return;
+
+    const requiresDepartment = true;
+
+    deptGroup.style.display = requiresDepartment ? 'block' : 'none';
+    deptSelect.required = requiresDepartment;
+    if (!requiresDepartment) {
+        deptSelect.value = '';
     }
 }
 
@@ -261,36 +294,10 @@ function setupEventListeners() {
     document.getElementById('newPassword')?.addEventListener('input', updatePasswordStrength);
     document.getElementById('password')?.addEventListener('input', updatePasswordStrengthForCreateEdit); // For create/edit user modal
 
-    // Department filter for create/edit user modal
-document.getElementById('role')?.addEventListener('change', function() {
-    const deptGroup = document.getElementById('departmentSelectGroupUserModal');
-    const deptSelect = document.getElementById('departmentUserModal');
-
-    if (deptGroup && deptSelect) {
-        // Use 'HEAD' (Uppercase) to match your Django Choices
-        if (this.value === 'HEAD' || this.value === 'EMPLOYEE') { 
-            deptGroup.style.display = 'block';
-            deptSelect.required = true;
-        } else {
-            deptGroup.style.display = 'none';
-            deptSelect.required = false;
-        }
-    }
-});
-
-   // Department filter for create/edit user modal
-document.getElementById('role')?.addEventListener('change', function() {
-    const deptGroup = document.getElementById('departmentSelectGroupUserModal');
-    
-    if (deptGroup) {
-        // Change to lowercase 'head' or 'employee' to match the HTML above!
-        if (this.value === 'head' || this.value === 'employee') { 
-            deptGroup.style.display = 'block';
-        } else {
-            deptGroup.style.display = 'none';
-        }
-    }
-});
+    // Department visibility for create/edit user modal
+    document.getElementById('role')?.addEventListener('change', function() {
+        toggleUserModalDepartment(this.value);
+    });
 
     // Bulk Actions
     document.getElementById('bulkDeactivate')?.addEventListener('click', bulkDeactivateUsers);
@@ -368,9 +375,7 @@ function openUserModal() {
     const userIdField = document.getElementById('userIdForEdit');
     if (userIdField) userIdField.value = '';
 
-    // Hide the department dropdown for new users safely
-    const deptGroup = document.getElementById('departmentSelectGroupUserModal');
-    if (deptGroup) deptGroup.style.display = 'none';
+    toggleUserModalDepartment(document.getElementById('role')?.value || '');
 
     // Finally, force it to show!
     modal.classList.add('show');
@@ -385,48 +390,54 @@ function closeUserModal() {
 
 async function editUser(userId) {
     currentEditingUserId = userId;
-    
-    // Fetch user data from the backend (AJAX)
+
+    const cachedUser = userDirectory.find((item) => String(item.id) === String(userId));
     try {
-        const response = await fetch(`/accounts/get-user-data/${userId}/`); // Changed to get_user_data
-        if (!response.ok) {
-            throw new Error('Failed to fetch user data.');
+        let userData = null;
+
+        if (cachedUser) {
+            const nameParts = splitDisplayName(cachedUser.name);
+            userData = {
+                first_name: nameParts.firstName,
+                last_name: nameParts.lastName,
+                email: cachedUser.email || '',
+                username: cachedUser.email ? String(cachedUser.email).split('@')[0] : '',
+                role: cachedUser.role || '',
+                department_id: cachedUser.departmentId || '',
+            };
+        } else {
+            const response = await fetch(`/accounts/get-user-data/${userId}/`);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch user data (${response.status}).`);
+            }
+            userData = await response.json();
         }
-        const userData = await response.json();
 
         if (document.getElementById('firstName')) document.getElementById('firstName').value = userData.first_name || '';
         if (document.getElementById('lastName')) document.getElementById('lastName').value = userData.last_name || '';
         if (document.getElementById('email')) document.getElementById('email').value = userData.email || '';
         if (document.getElementById('username')) document.getElementById('username').value = userData.username || '';
         const roleValue = String(userData.role || '');
-        const roleForUi = roleValue === 'department_head' ? 'head' : (roleValue.startsWith('hr_') ? 'hr' : roleValue);
+        const roleForUi = mapRoleForUserModal(roleValue);
         if (document.getElementById('role')) document.getElementById('role').value = roleForUi || '';
         if (document.getElementById('userIdForEdit')) document.getElementById('userIdForEdit').value = userId;
+        const deptSelect = document.getElementById('departmentUserModal');
+        if (deptSelect) deptSelect.value = userData.department_id ? String(userData.department_id) : '';
 
         // Password fields are not required for edit unless explicitly changing
-            const pwdField = document.getElementById('password1'); // Updated ID
-            const confirmPwdField = document.getElementById('password2'); // Updated ID
+        const pwdField = document.getElementById('password');
+        const confirmPwdField = document.getElementById('confirmPassword');
 
-            if (pwdField) {
-                pwdField.required = false;
-                pwdField.value = '';
-            }
-            if (confirmPwdField) {
-                confirmPwdField.required = false;
-                confirmPwdField.value = '';
-            }
-
-        // Handle department for HEAD role
-        const deptGroup = document.getElementById('departmentSelectGroupUserModal');
-        if (String(userData.role || '').toLowerCase() === 'head') {
-            deptGroup.style.display = 'block';
-            document.getElementById('departmentUserModal').required = true;
-            document.getElementById('departmentUserModal').value = userData.department_id || '';
-        } else {
-            deptGroup.style.display = 'none';
-            document.getElementById('departmentUserModal').required = false;
-            document.getElementById('departmentUserModal').value = '';
+        if (pwdField) {
+            pwdField.required = false;
+            pwdField.value = '';
         }
+        if (confirmPwdField) {
+            confirmPwdField.required = false;
+            confirmPwdField.value = '';
+        }
+
+        toggleUserModalDepartment(roleForUi);
 
     document.getElementById('modalTitle').textContent = 'Edit User';
     document.getElementById('userModal').style.display = 'flex';
@@ -485,19 +496,22 @@ async function handleUserFormSubmit(e) {
     e.preventDefault();
 
     const formData = new FormData();
-    const userId = document.getElementById('userIdForEdit').value;
+    const userIdField = document.getElementById('userIdForEdit');
+    const userId = userIdField ? userIdField.value : '';
 
     const firstName = (document.getElementById('firstName')?.value || '').trim();
     const lastName = (document.getElementById('lastName')?.value || '').trim();
     const email = (document.getElementById('email')?.value || '').trim();
     const username = email ? email.split('@')[0] : '';
     const role = (document.getElementById('role')?.value || '').trim();
+    const departmentId = (document.getElementById('departmentUserModal')?.value || '').trim();
 
     formData.set('firstName', firstName);
     formData.set('lastName', lastName);
     formData.set('email', email);
     formData.set('username', username);
     formData.set('role', role);
+    formData.set('department', departmentId);
 
     // Grab whatever the HTML input names are (usually password / confirm_password)
     const pwd = (document.getElementById('password')?.value || '').trim();
@@ -516,6 +530,11 @@ async function handleUserFormSubmit(e) {
     // Safety check: only check length if password actually exists
     if (pwd && pwd.length < 8) {
         showAlert('Password must be at least 8 characters long!', 'danger');
+        return;
+    }
+
+    if (!departmentId) {
+        showAlert('Please select a department for this role.', 'danger');
         return;
     }
 

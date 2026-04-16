@@ -248,6 +248,7 @@
             <span class="close" onclick="closeUserModal()">&times;</span>
             <h2 id="modalTitle">Create New User</h2>
             <form id="userForm">
+                <input type="hidden" id="userIdForEdit">
                 <div class="form-group">
                     <label>First Name *</label>
                     <input type="text" id="firstName" required>
@@ -276,6 +277,12 @@
                         <option value="head">Department Head</option>
                         <option value="admin">Admin</option>
                         <option value="employee">Employee</option>
+                    </select>
+                </div>
+                <div class="form-group" id="departmentSelectGroupUserModal" style="display: none;">
+                    <label>Department *</label>
+                    <select id="departmentUserModal">
+                        <option value="">Select Department</option>
                     </select>
                 </div>
                 <div class="form-actions">
