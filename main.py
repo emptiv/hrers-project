@@ -1740,6 +1740,195 @@ def admin_recent_activity(
     return {"items": trimmed}
 
 
+@app.get("/api/admin/audit-trails")
+def admin_audit_trails(
+    search: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    action_type: str | None = None,
+    status: str | None = None,
+    current_user: User = Depends(require_roles(UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    def parse_date(value: str | None) -> date | None:
+        if not value:
+            return None
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    def to_iso(value: datetime | None) -> str | None:
+        return value.isoformat() if value else None
+
+    from_date_obj = parse_date(from_date)
+    to_date_obj = parse_date(to_date)
+    search_term = (search or "").strip().lower()
+    action_filter = (action_type or "").strip().lower()
+    status_filter = (status or "").strip().lower()
+
+    users = db.query(User).all()
+    user_by_id = {int(item.id): item for item in users}
+
+    login_logs: list[dict[str, object]] = []
+    attendance_rows = (
+        db.query(AttendanceRecord)
+        .order_by(AttendanceRecord.record_date.desc(), AttendanceRecord.updated_at.desc(), AttendanceRecord.id.desc())
+        .limit(300)
+        .all()
+    )
+    for row in attendance_rows:
+        user = user_by_id.get(int(row.user_id))
+        if not user:
+            continue
+
+        if row.status in {AttendanceStatus.present, AttendanceStatus.late}:
+            status_type = "success"
+        elif row.status in {AttendanceStatus.leave, AttendanceStatus.holiday}:
+            status_type = "warning"
+        else:
+            status_type = "failed"
+
+        login_logs.append(
+            {
+                "id": f"att-{row.id}",
+                "username": str(user.username),
+                "email": str(user.email),
+                "loginTime": to_iso(row.time_in),
+                "logoutTime": to_iso(row.time_out),
+                "recordDate": row.record_date.isoformat() if row.record_date else None,
+                "ipAddress": "N/A",
+                "userAgent": "N/A",
+                "status": status_type.title(),
+                "statusType": status_type,
+                "notes": str(row.notes or "Attendance-based access log."),
+            }
+        )
+
+    activity_logs: list[dict[str, object]] = []
+    for item in users:
+        created_at = item.created_at
+        activity_logs.append(
+            {
+                "id": f"user-created-{item.id}",
+                "activityType": "user_created",
+                "activityLabel": "User Created",
+                "actor": "System",
+                "user": str(item.full_name),
+                "email": str(item.email),
+                "ipAddress": "N/A",
+                "description": f"User account created with role {str(item.role.value).replace('_', ' ').title()}.",
+                "status": "Success",
+                "statusType": "success",
+                "timestamp": to_iso(created_at),
+            }
+        )
+
+        if item.updated_at and item.created_at and item.updated_at > item.created_at + timedelta(seconds=1):
+            status_type = "success" if bool(item.is_active) else "warning"
+            activity_logs.append(
+                {
+                    "id": f"user-updated-{item.id}",
+                    "activityType": "account_activated" if bool(item.is_active) else "account_deactivated",
+                    "activityLabel": "Account Activated" if bool(item.is_active) else "Account Deactivated",
+                    "actor": "System",
+                    "user": str(item.full_name),
+                    "email": str(item.email),
+                    "ipAddress": "N/A",
+                    "description": "User account record was updated.",
+                    "status": status_type.title(),
+                    "statusType": status_type,
+                    "timestamp": to_iso(item.updated_at),
+                }
+            )
+
+    position_rows = (
+        db.query(PositionChangeRequest)
+        .order_by(PositionChangeRequest.updated_at.desc(), PositionChangeRequest.id.desc())
+        .limit(200)
+        .all()
+    )
+    for item in position_rows:
+        status_type = "success" if item.status == PositionChangeStatus.approved else ("warning" if item.status == PositionChangeStatus.pending else "failed")
+        activity_logs.append(
+            {
+                "id": f"position-{item.id}",
+                "activityType": "role_changed",
+                "activityLabel": "Role Changed",
+                "actor": str(item.reviewed_by_name or "System"),
+                "user": str(item.employee_name),
+                "email": "",
+                "ipAddress": "N/A",
+                "description": f"Position request: {item.current_position or 'N/A'} -> {item.requested_position} ({item.status.value}).",
+                "status": status_type.title(),
+                "statusType": status_type,
+                "timestamp": to_iso(item.updated_at or item.created_at),
+            }
+        )
+
+    def within_date(value: str | None) -> bool:
+        if not value:
+            return True
+        try:
+            dt_value = datetime.fromisoformat(value)
+        except ValueError:
+            return True
+        day_value = dt_value.date()
+        if from_date_obj and day_value < from_date_obj:
+            return False
+        if to_date_obj and day_value > to_date_obj:
+            return False
+        return True
+
+    def matches_search(parts: list[str]) -> bool:
+        if not search_term:
+            return True
+        return search_term in " ".join(parts).lower()
+
+    filtered_login_logs: list[dict[str, object]] = []
+    for item in login_logs:
+        action_bucket = "failed_login" if item["statusType"] == "failed" else "login"
+        if action_filter and action_filter not in {"login", "logout", "failed_login"}:
+            continue
+        if action_filter == "logout" and not item.get("logoutTime"):
+            continue
+        if action_filter == "failed_login" and action_bucket != "failed_login":
+            continue
+        if status_filter and item["statusType"] != status_filter:
+            continue
+        if not within_date(item.get("loginTime") or item.get("recordDate")):  # type: ignore[arg-type]
+            continue
+        if not matches_search([str(item.get("username", "")), str(item.get("email", "")), str(item.get("ipAddress", ""))]):
+            continue
+        filtered_login_logs.append(item)
+
+    filtered_activity_logs: list[dict[str, object]] = []
+    for item in activity_logs:
+        if action_filter and item["activityType"] != action_filter:
+            continue
+        if status_filter and item["statusType"] != status_filter:
+            continue
+        if not within_date(str(item.get("timestamp") or "")):
+            continue
+        if not matches_search([
+            str(item.get("user", "")),
+            str(item.get("email", "")),
+            str(item.get("description", "")),
+            str(item.get("ipAddress", "")),
+            str(item.get("actor", "")),
+        ]):
+            continue
+        filtered_activity_logs.append(item)
+
+    filtered_login_logs.sort(key=lambda x: str(x.get("loginTime") or x.get("recordDate") or ""), reverse=True)
+    filtered_activity_logs.sort(key=lambda x: str(x.get("timestamp") or ""), reverse=True)
+
+    return {
+        "loginLogs": filtered_login_logs[:200],
+        "activityLogs": filtered_activity_logs[:300],
+    }
+
+
 @app.get("/api/trainings")
 def list_trainings(
     current_user: User = Depends(get_current_user),

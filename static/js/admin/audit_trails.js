@@ -2,64 +2,48 @@
    Audit Trails JavaScript
    ================================= */
 
-let currentAction = null;
+let renderedLoginLogs = [];
+let renderedActivityLogs = [];
+const loginLogById = new Map();
 
 document.addEventListener('DOMContentLoaded', function() {
     initializeAuditTrails();
 });
 
 function initializeAuditTrails() {
-    setupEventListeners();
-    setupSearch();
     setupDatePickers();
+    setupEventListeners();
+    loadAuditData();
 }
 
 function setupEventListeners() {
-    // Export Button
     document.getElementById('exportBtn')?.addEventListener('click', openExportModal);
-
-    // View Details Buttons
-    document.querySelectorAll('.view-details').forEach(btn => {
-        btn.addEventListener('click', function(e) {
-            e.preventDefault();
-            const logId = this.dataset.logId;
-            viewLogDetails(logId);
-        });
-    });
-
-    // Filter Button
     document.getElementById('filterBtn')?.addEventListener('click', applyFilters);
     document.getElementById('clearFilterBtn')?.addEventListener('click', clearFilters);
+    document.getElementById('exportForm')?.addEventListener('submit', handleExport);
 
-    // Modal Close Buttons
-    document.querySelectorAll('.modal .close').forEach(btn => {
+    document.querySelectorAll('.modal .close').forEach((btn) => {
         btn.addEventListener('click', function() {
             this.closest('.modal').classList.remove('show');
         });
     });
 
-    // Form Submissions
-    document.getElementById('exportForm')?.addEventListener('submit', handleExport);
-
-    // Confirm Modal Button
-    document.getElementById('confirmBtn')?.addEventListener('click', executeConfirmedAction);
-}
-
-function setupSearch() {
-    document.getElementById('auditSearch')?.addEventListener('keyup', function() {
-        const searchTerm = this.value.toLowerCase();
-        filterLogs(searchTerm);
+    document.getElementById('loginLogsBody')?.addEventListener('click', function(e) {
+        const button = e.target.closest('.view-details');
+        if (!button) return;
+        e.preventDefault();
+        viewLogDetails(button.dataset.logId);
     });
+
+    document.getElementById('auditSearch')?.addEventListener('keyup', debounce(applyFilters, 300));
 }
 
 function setupDatePickers() {
     const fromDateInput = document.getElementById('fromDate');
     const toDateInput = document.getElementById('toDate');
 
-    // Set default dates (last 30 days)
     const today = new Date();
     const thirtyDaysAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-
     if (fromDateInput && !fromDateInput.value) {
         fromDateInput.value = thirtyDaysAgo.toISOString().split('T')[0];
     }
@@ -68,69 +52,158 @@ function setupDatePickers() {
     }
 }
 
-function filterLogs(searchTerm) {
-    // Filter login logs
-    document.querySelectorAll('#loginLogsBody tr').forEach(row => {
-        const rowText = row.textContent.toLowerCase();
-        row.style.display = rowText.includes(searchTerm) ? '' : 'none';
+function readFilters() {
+    return {
+        search: (document.getElementById('auditSearch')?.value || '').trim(),
+        from_date: (document.getElementById('fromDate')?.value || '').trim(),
+        to_date: (document.getElementById('toDate')?.value || '').trim(),
+        action_type: (document.getElementById('activityFilter')?.value || '').trim(),
+        status: (document.getElementById('statusFilter')?.value || '').trim(),
+    };
+}
+
+async function loadAuditData() {
+    const filters = readFilters();
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.set(key, value);
     });
 
-    // Filter activity logs
-    document.querySelectorAll('.activity-log-item').forEach(item => {
-        const itemText = item.textContent.toLowerCase();
-        item.style.display = itemText.includes(searchTerm) ? '' : 'none';
-    });
+    try {
+        const response = await fetch(`/api/admin/audit-trails?${params.toString()}`);
+        if (!response.ok) {
+            throw new Error(`Failed to load audit logs (${response.status})`);
+        }
+
+        const payload = await response.json();
+        renderedLoginLogs = Array.isArray(payload.loginLogs) ? payload.loginLogs : [];
+        renderedActivityLogs = Array.isArray(payload.activityLogs) ? payload.activityLogs : [];
+
+        loginLogById.clear();
+        renderedLoginLogs.forEach((item) => loginLogById.set(String(item.id), item));
+
+        renderLoginLogs(renderedLoginLogs);
+        renderActivityLogs(renderedActivityLogs);
+    } catch (error) {
+        renderLoginLogs([]);
+        renderActivityLogs([]);
+        showAlert('Failed to load audit data from database.', 'danger');
+    }
+}
+
+function renderLoginLogs(items) {
+    const body = document.getElementById('loginLogsBody');
+    if (!body) return;
+
+    if (!items.length) {
+        body.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:20px;">No login/access logs found.</td></tr>`;
+        return;
+    }
+
+    body.innerHTML = items.map((item) => {
+        const loginTime = formatDateTime(item.loginTime || item.recordDate);
+        const logoutTime = formatDateTime(item.logoutTime) || 'Currently Active';
+        const badgeClass = statusBadgeClass(item.statusType || item.status);
+        return `
+            <tr class="log-row" data-log-id="${item.id}">
+                <td><strong>${escapeHtml(item.username || '--')}</strong></td>
+                <td>${escapeHtml(item.email || '--')}</td>
+                <td><span class="timestamp">${escapeHtml(loginTime || '--')}</span></td>
+                <td><span class="timestamp">${escapeHtml(logoutTime)}</span></td>
+                <td><code class="ip-address">${escapeHtml(item.ipAddress || 'N/A')}</code></td>
+                <td><span class="device-info">${escapeHtml(item.userAgent || 'N/A')}</span></td>
+                <td><span class="status-badge ${badgeClass}">${escapeHtml(item.status || '--')}</span></td>
+                <td>
+                    <button class="btn-icon view-details" data-log-id="${item.id}" title="View Details">
+                        <i class="fas fa-circle-info"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function renderActivityLogs(items) {
+    const container = document.getElementById('activityLogsList');
+    if (!container) return;
+
+    if (!items.length) {
+        container.innerHTML = `<div style="text-align:center; padding:20px; color: var(--admin-text-light);">No activity logs found.</div>`;
+        return;
+    }
+
+    container.innerHTML = items.map((item) => {
+        const badgeClass = statusBadgeClass(item.statusType || item.status);
+        const icon = iconForActivity(item.activityType);
+        return `
+            <div class="activity-log-item">
+                <div class="log-icon"><i class="fas ${icon}"></i></div>
+                <div class="log-content">
+                    <div class="log-header">
+                        <p class="log-activity">${escapeHtml(item.activityLabel || 'Activity')}</p>
+                        <span class="log-time">${escapeHtml(formatDateTime(item.timestamp) || '--')}</span>
+                    </div>
+                    <div class="log-details">
+                        <p class="log-user"><strong>User:</strong> ${escapeHtml(item.user || '--')}${item.email ? ` (${escapeHtml(item.email)})` : ''}</p>
+                        <p class="log-ip"><strong>IP Address:</strong> <code>${escapeHtml(item.ipAddress || 'N/A')}</code></p>
+                        <p class="log-description"><strong>Details:</strong> ${escapeHtml(item.description || 'No details available.')}</p>
+                    </div>
+                </div>
+                <div class="log-status"><span class="status-badge ${badgeClass}">${escapeHtml(item.status || '--')}</span></div>
+            </div>
+        `;
+    }).join('');
+}
+
+function statusBadgeClass(status) {
+    const value = String(status || '').toLowerCase();
+    if (value.includes('fail')) return 'failed';
+    if (value.includes('warn')) return 'warning';
+    return 'success';
+}
+
+function iconForActivity(activityType) {
+    const value = String(activityType || '').toLowerCase();
+    if (value === 'user_created') return 'fa-user-plus';
+    if (value === 'role_changed') return 'fa-user-tie';
+    if (value === 'account_deactivated') return 'fa-user-slash';
+    if (value === 'account_activated') return 'fa-user-check';
+    return 'fa-list-check';
 }
 
 function applyFilters() {
-    const searchTerm = document.getElementById('auditSearch').value;
-    const fromDate = document.getElementById('fromDate').value;
-    const toDate = document.getElementById('toDate').value;
-    const activity = document.getElementById('activityFilter').value;
-    const status = document.getElementById('statusFilter').value;
-
-    const url = new URL(window.location.href);
-    
-    if (searchTerm) url.searchParams.set('search', searchTerm);
-    else url.searchParams.delete('search');
-
-    if (fromDate) url.searchParams.set('from_date', fromDate);
-    else url.searchParams.delete('from_date');
-
-    if (toDate) url.searchParams.set('to_date', toDate);
-    else url.searchParams.delete('to_date');
-
-    if (activity) url.searchParams.set('action_type', activity);
-    else url.searchParams.delete('action_type');
-
-    if (status) url.searchParams.set('status', status);
-    else url.searchParams.delete('status');
-
-    window.location.href = url.toString();
+    loadAuditData();
 }
 
 function clearFilters() {
-    window.location.href = window.location.pathname;
+    document.getElementById('auditSearch').value = '';
+    document.getElementById('activityFilter').value = '';
+    document.getElementById('statusFilter').value = '';
+
+    const today = new Date();
+    const thirtyDaysAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+    document.getElementById('fromDate').value = thirtyDaysAgo.toISOString().split('T')[0];
+    document.getElementById('toDate').value = today.toISOString().split('T')[0];
+
+    loadAuditData();
 }
 
 function viewLogDetails(logId) {
-    const row = document.querySelector(`tr[data-log-id="${logId}"]`);
-    if (!row) return;
+    const item = loginLogById.get(String(logId));
+    if (!item) return;
 
-    const cells = row.querySelectorAll('td');
-    
-    // Populate modal with log details
-    document.getElementById('detailUsername').textContent = cells[0].textContent.trim();
-    document.getElementById('detailEmail').textContent = cells[1].textContent.trim();
-    document.getElementById('detailLoginTime').textContent = cells[2].textContent.trim();
-    document.getElementById('detailLogoutTime').textContent = cells[3].textContent.trim();
-    document.getElementById('detailIp').textContent = cells[4].textContent.trim();
-    document.getElementById('detailUserAgent').textContent = cells[5].textContent.trim();
-    document.getElementById('detailStatus').textContent = cells[6].textContent.trim();
+    const loginText = formatDateTime(item.loginTime || item.recordDate) || '--';
+    const logoutText = formatDateTime(item.logoutTime) || 'Currently Active';
 
-    // Calculate session duration
-    const sessionDuration = calculateSessionDuration(cells[2].textContent, cells[3].textContent);
-    document.getElementById('detailDuration').textContent = sessionDuration;
+    document.getElementById('detailUsername').textContent = item.username || '--';
+    document.getElementById('detailEmail').textContent = item.email || '--';
+    document.getElementById('detailLoginTime').textContent = loginText;
+    document.getElementById('detailLogoutTime').textContent = logoutText;
+    document.getElementById('detailIp').textContent = item.ipAddress || 'N/A';
+    document.getElementById('detailUserAgent').textContent = item.userAgent || 'N/A';
+    document.getElementById('detailStatus').textContent = item.status || '--';
+    document.getElementById('detailDuration').textContent = calculateSessionDuration(item.loginTime, item.logoutTime);
+    document.getElementById('detailNotes').textContent = item.notes || 'No additional notes available.';
 
     document.getElementById('logDetailsModal').classList.add('show');
 }
@@ -138,55 +211,22 @@ function viewLogDetails(logId) {
 function closeLogDetailsModal() {
     document.getElementById('logDetailsModal').classList.remove('show');
 }
+window.closeLogDetailsModal = closeLogDetailsModal;
 
-function calculateSessionDuration(loginTime, logoutTime) {
-    if (!logoutTime || logoutTime.includes('Currently')) {
+function calculateSessionDuration(loginTimeIso, logoutTimeIso) {
+    if (!loginTimeIso || !logoutTimeIso) {
         return 'Still Active';
     }
-
-    const login = parseAuditDateTime(loginTime);
-    const logout = parseAuditDateTime(logoutTime);
-    if (!login || !logout) {
+    const login = new Date(loginTimeIso);
+    const logout = new Date(logoutTimeIso);
+    if (Number.isNaN(login.getTime()) || Number.isNaN(logout.getTime()) || logout <= login) {
         return 'Unavailable';
     }
 
-    const diffMs = logout.getTime() - login.getTime();
-    if (diffMs <= 0) {
-        return 'Unavailable';
-    }
-
-    const totalMinutes = Math.floor(diffMs / 60000);
+    const totalMinutes = Math.floor((logout.getTime() - login.getTime()) / 60000);
     const hours = Math.floor(totalMinutes / 60);
     const minutes = totalMinutes % 60;
     return `${hours}h ${String(minutes).padStart(2, '0')}m`;
-}
-
-function parseAuditDateTime(value) {
-    if (!value) return null;
-
-    const normalized = String(value)
-        .replace(/\bat\b/gi, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-    const parsed = new Date(normalized);
-    if (!Number.isNaN(parsed.getTime())) {
-        return parsed;
-    }
-
-    const timeMatch = normalized.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-    if (!timeMatch) return null;
-
-    let hour = Number(timeMatch[1]);
-    const minute = Number(timeMatch[2]);
-    const period = timeMatch[3].toUpperCase();
-
-    if (period === 'PM' && hour !== 12) hour += 12;
-    if (period === 'AM' && hour === 12) hour = 0;
-
-    const fallback = new Date();
-    fallback.setHours(hour, minute, 0, 0);
-    return fallback;
 }
 
 function openExportModal() {
@@ -196,93 +236,75 @@ function openExportModal() {
 function closeExportModal() {
     document.getElementById('exportModal').classList.remove('show');
 }
+window.closeExportModal = closeExportModal;
 
 function handleExport(e) {
     e.preventDefault();
 
-    const format = document.querySelector('input[name="format"]:checked').value;
-    const fromDate = document.getElementById('exportFromDate').value;
-    const logTypes = Array.from(document.querySelectorAll('input[name="log_types"]:checked'))
-        .map(el => el.value);
-
-    if (logTypes.length === 0) {
+    const logTypes = Array.from(document.querySelectorAll('input[name="log_types"]:checked')).map((el) => el.value);
+    const range = document.getElementById('exportFromDate')?.value || '1m';
+    if (!logTypes.length) {
         showAlert('Please select at least one log type!', 'danger');
         return;
     }
 
-    const exportRows = collectExportRows(logTypes, fromDate);
-    if (!exportRows.length) {
+    const rows = collectExportRows(logTypes, range);
+    if (!rows.length) {
         showAlert('No matching records found for export.', 'warning');
         return;
     }
 
-    // Export as CSV for now even when Excel/PDF is selected.
     const filename = `audit-logs-${new Date().toISOString().split('T')[0]}.csv`;
-    downloadCsv(filename, exportRows);
-
-    showAlert(`Exported ${exportRows.length} row(s) as CSV.`, 'success');
+    downloadCsv(filename, rows);
+    showAlert(`Exported ${rows.length} row(s) as CSV.`, 'success');
     closeExportModal();
 }
 
-function collectExportRows(logTypes, fromDate) {
-    const rows = [];
-    const includeLogin = logTypes.includes('login');
-    const includeActivity = logTypes.includes('activity');
+function collectExportRows(logTypes, range) {
+    const result = [];
+    const cutoffDate = rangeCutoff(range);
 
-    if (includeLogin) {
-        document.querySelectorAll('#loginLogsBody tr').forEach(function (tr) {
-            if (tr.style.display === 'none') return;
-            const cells = tr.querySelectorAll('td');
-            if (cells.length < 7) return;
-
-            rows.push({
+    if (logTypes.includes('login')) {
+        renderedLoginLogs.forEach((item) => {
+            const dt = new Date(item.loginTime || item.recordDate || '');
+            if (cutoffDate && !Number.isNaN(dt.getTime()) && dt < cutoffDate) return;
+            result.push({
                 logType: 'login',
-                user: cells[0].textContent.trim(),
-                email: cells[1].textContent.trim(),
-                dateTime: cells[2].textContent.trim(),
+                user: item.username || '',
+                email: item.email || '',
+                dateTime: formatDateTime(item.loginTime || item.recordDate) || '',
                 action: 'Login Session',
-                details: `Logout: ${cells[3].textContent.trim()}, IP: ${cells[4].textContent.trim()}, Device: ${cells[5].textContent.trim()}`,
-                status: cells[6].textContent.trim(),
+                details: `Logout: ${formatDateTime(item.logoutTime) || 'Currently Active'}, IP: ${item.ipAddress || 'N/A'}, Device: ${item.userAgent || 'N/A'}`,
+                status: item.status || '',
             });
         });
     }
 
-    if (includeActivity) {
-        document.querySelectorAll('.activity-log-item').forEach(function (item) {
-            if (item.style.display === 'none') return;
-
-            const action = item.querySelector('.action')?.textContent?.trim() || 'Activity';
-            const user = item.querySelector('.user-name')?.textContent?.trim() || 'Unknown User';
-            const dateTime = item.querySelector('.timestamp')?.textContent?.trim() || '';
-            const status = item.querySelector('.status, .badge, .state')?.textContent?.trim() || 'N/A';
-            const details = item.querySelector('.description, .details')?.textContent?.trim() || item.textContent.trim();
-
-            rows.push({
+    if (logTypes.includes('activity')) {
+        renderedActivityLogs.forEach((item) => {
+            const dt = new Date(item.timestamp || '');
+            if (cutoffDate && !Number.isNaN(dt.getTime()) && dt < cutoffDate) return;
+            result.push({
                 logType: 'activity',
-                user: user,
-                email: '',
-                dateTime: dateTime,
-                action: action,
-                details: details,
-                status: status,
+                user: item.user || '',
+                email: item.email || '',
+                dateTime: formatDateTime(item.timestamp) || '',
+                action: item.activityLabel || 'Activity',
+                details: item.description || '',
+                status: item.status || '',
             });
         });
     }
 
-    if (!fromDate) {
-        return rows;
-    }
+    return result;
+}
 
-    const from = new Date(fromDate + 'T00:00:00');
-    if (Number.isNaN(from.getTime())) {
-        return rows;
-    }
-
-    return rows.filter(function (row) {
-        const parsed = new Date(row.dateTime);
-        if (Number.isNaN(parsed.getTime())) return true;
-        return parsed >= from;
-    });
+function rangeCutoff(range) {
+    const now = new Date();
+    const map = { '1w': 7, '1m': 30, '3m': 90, '6m': 180, '1y': 365 };
+    const days = map[range];
+    if (!days) return null;
+    return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
 }
 
 function csvEscape(value) {
@@ -296,8 +318,7 @@ function csvEscape(value) {
 function downloadCsv(filename, rows) {
     const headers = ['Log Type', 'User', 'Email', 'Date/Time', 'Action', 'Details', 'Status'];
     const lines = [headers.map(csvEscape).join(',')];
-
-    rows.forEach(function (row) {
+    rows.forEach((row) => {
         lines.push([
             row.logType,
             row.user,
@@ -320,37 +341,39 @@ function downloadCsv(filename, rows) {
     URL.revokeObjectURL(url);
 }
 
-function executeConfirmedAction() {
-    // This is handled by individual action handlers
+function formatDateTime(value) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString(undefined, {
+        month: 'short',
+        day: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
 }
 
-// Tooltip functionality for IP addresses and user agents
-document.querySelectorAll('.ip-address, .device-info').forEach(el => {
-    el.addEventListener('mouseenter', function() {
-        const tooltip = document.createElement('div');
-        tooltip.className = 'tooltip';
-        tooltip.textContent = this.textContent;
-        tooltip.style.position = 'absolute';
-        tooltip.style.top = '-40px';
-        tooltip.style.left = '0';
-        tooltip.style.backgroundColor = '#1e293b';
-        tooltip.style.color = 'white';
-        tooltip.style.padding = '8px 12px';
-        tooltip.style.borderRadius = '4px';
-        tooltip.style.whiteSpace = 'nowrap';
-        tooltip.style.zIndex = '1000';
-        tooltip.style.fontSize = '12px';
-        tooltip.style.pointerEvents = 'none';
-        
-        this.parentElement.style.position = 'relative';
-        this.parentElement.appendChild(tooltip);
-    });
+function escapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
 
-    el.addEventListener('mouseleave', function() {
-        const tooltip = this.parentElement.querySelector('.tooltip');
-        tooltip?.remove();
-    });
-});
+function debounce(func, delay) {
+    let timeout;
+    return function(...args) {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(this, args), delay);
+    };
+}
+
+function executeConfirmedAction() {
+    // Reserved for parity with other admin scripts.
+}
 
 function showAlert(message, type = 'info') {
     // Create (or reuse) a toast container so multiple alerts stack without overlap.
