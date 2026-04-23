@@ -1,130 +1,115 @@
-const sidebar = document.getElementById('sidebar');
-const logoToggle = document.getElementById('logoToggle');
-const closeBtn = document.getElementById('closeBtn');
-const deleteUserBtn = document.getElementById('deleteUserBtn');
-const menuItems = document.querySelectorAll('.menu-item');
+document.addEventListener('DOMContentLoaded', () => {
+    const sidebar = document.getElementById('sidebar');
+    const logoToggle = document.getElementById('logoToggle');
+    const closeBtn = document.getElementById('closeBtn');
+    const deleteUserBtn = document.getElementById('deleteUserBtn');
+    const form = document.getElementById('editEmployeeForm');
+    const menuItems = document.querySelectorAll('.menu-item');
+    const params = new URLSearchParams(window.location.search);
+    const employeeId = params.get('employee_id') || params.get('id');
 
-// --- Sidebar Tooltip Initialization ---
-menuItems.forEach(item => {
-    const span = item.querySelector('span');
-    if (span) {
-        item.setAttribute('data-text', span.innerText.trim());
+    menuItems.forEach(item => {
+        const span = item.querySelector('span');
+        if (span) item.setAttribute('data-text', span.innerText.trim());
+    });
+
+    if (logoToggle) logoToggle.addEventListener('click', () => sidebar.classList.toggle('close'));
+    if (closeBtn) closeBtn.addEventListener('click', () => sidebar.classList.add('close'));
+
+    function setBasicValue(index, value) {
+        const inputs = form.querySelectorAll('.form-section-box:first-child .input-item input');
+        if (inputs[index]) inputs[index].value = value || '';
     }
-});
 
-// --- Sidebar Toggle Logic ---
-if (logoToggle) {
-    logoToggle.addEventListener('click', () => sidebar.classList.toggle('close'));
-}
-if (closeBtn) {
-    closeBtn.addEventListener('click', () => sidebar.classList.add('close'));
-}
+    function getInput(name) {
+        return form.querySelector(`[name="${name}"]`);
+    }
 
-// --- Delete User functionality ---
-if (deleteUserBtn) {
-    deleteUserBtn.addEventListener('click', function() {
-        Swal.fire({
-            title: 'Are you sure?',
-            text: "Do you want to delete this user? This action cannot be undone.",
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonColor: '#800000', // Maroon
-            cancelButtonColor: '#6c757d',
-            confirmButtonText: 'Yes, delete user',
-            cancelButtonText: 'No, keep user',
-            width: '400px',
-            customClass: {
-                title: 'small-swal-title',
-                htmlContainer: 'small-swal-text'
+    async function loadEmployee() {
+        if (!employeeId) return;
+        const response = await fetch(`/api/employees/${encodeURIComponent(employeeId)}`);
+        if (!response.ok) return;
+        const employee = await response.json();
+
+        const parts = String(employee.fullName || '').trim().split(/\s+/);
+        const firstName = parts[0] || '';
+        const lastName = parts.slice(1).join(' ');
+
+        setBasicValue(0, firstName);
+        setBasicValue(1, lastName);
+        setBasicValue(2, employee.username || '');
+        setBasicValue(3, employee.employeeNo || '');
+        const employmentSelect = form.querySelector('select[name="employment_type"]');
+        if (employmentSelect && employee.employmentType) employmentSelect.value = employee.employmentType;
+        setBasicValue(4, employee.department || '--');
+        setBasicValue(5, employee.dateHired || '--');
+
+        const email = getInput('email');
+        if (email) email.value = employee.email || '';
+        const contact = getInput('contact_number');
+        if (contact) contact.value = employee.contactNumber || '';
+        const address = getInput('address');
+        if (address) address.value = employee.address || '';
+        const emergencyName = getInput('emergency_contact_name');
+        if (emergencyName) emergencyName.value = employee.emergencyName || '';
+        const emergencyPhone = getInput('emergency_contact_num');
+        if (emergencyPhone) emergencyPhone.value = employee.emergencyPhone || '';
+    }
+
+    if (form) {
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (!employeeId) return;
+
+            const payload = new FormData(form);
+            const response = await fetch(`/api/employees/${encodeURIComponent(employeeId)}`, {
+                method: 'PUT',
+                body: payload,
+            });
+
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({ detail: 'Unable to update employee.' }));
+                Swal.fire({ icon: 'error', title: 'Update failed', text: err.detail || 'Unable to update employee.' });
+                return;
             }
-        }).then((result) => {
-            if (result.isConfirmed) {
-                // Trigger the hidden form we added to the HTML
-                const deleteForm = document.getElementById('deleteForm');
-                if (deleteForm) {
-                    deleteForm.submit();
-                } else {
-                    // Fallback if form isn't there (though it should be!)
-                    Swal.fire({
-                        title: 'Deleted!',
-                        text: 'The user has been successfully removed.',
-                        icon: 'success',
-                        confirmButtonColor: '#4a1d1d'
-                    }).then(() => {
-                        window.location.href = "/hr/employees/";
-                    });
-                }
-            }
+
+            Swal.fire({
+                icon: 'success',
+                title: 'Profile Updated',
+                text: 'Employee record has been updated in the database.',
+                confirmButtonColor: '#4a1d1d',
+            }).then(() => {
+                window.location.href = `hr_employee_view.html?employee_id=${encodeURIComponent(employeeId)}`;
+            });
         });
-    });
-}
-
-// --- Update Profile Logic ---
-function updateHRProfile() {
-    // Note: The actual "Saving" is handled by the <button type="submit"> 
-    // This JS function is likely called via onclick in your HTML.
-    // To let Django handle the save, simply submit the form:
-    document.getElementById('editEmployeeForm').submit();
-}
-
-// --- Cancel Edit Logic ---
-function cancelHREdit() {
-    Swal.fire({
-        title: 'Discard changes?',
-        text: "Any unsaved information will be lost.",
-        icon: 'warning',
-        showCancelButton: true,
-        confirmButtonColor: '#4a1d1d',
-        cancelButtonColor: '#d33',
-        confirmButtonText: 'Yes, discard',
-        cancelButtonText: 'No',
-        width: '400px',
-        padding: '1rem',
-        customClass: {
-            title: 'small-swal-title',
-            htmlContainer: 'small-swal-text'
-        }
-    }).then((result) => {
-        if (result.isConfirmed) {
-            // Redirect back to the Employee Records list
-            window.location.href = "/hr/employees/";
-        }
-    });
-}
-
-// --- Add Event Modal Logic ---
-function openEventModal() {
-    const modal = document.getElementById('eventModal');
-    if (modal) modal.style.display = 'flex';
-}
-
-function closeEventModal() {
-    const modal = document.getElementById('eventModal');
-    if (modal) modal.style.display = 'none';
-}
-
-// --- File Upload Logic ---
-function triggerFileUpload() {
-    const fileInput = document.getElementById('fileInput');
-    if (fileInput) fileInput.click();
-}
-
-function handleFileSelect(input) {
-    if (input.files && input.files[0]) {
-        const file = input.files[0];
-        const fileURL = URL.createObjectURL(file); 
-        const display = document.getElementById('fileDisplayArea');
-
-        if (display) {
-            display.innerHTML = `
-                <div class="file-row" style="display: flex; justify-content: space-between; align-items: center; background: #f9f9f9; padding: 10px; border-radius: 8px; margin-top: 10px;">
-                    <span><i class="fas fa-file"></i> ${file.name}</span>
-                    <div class="file-actions">
-                        <a href="${fileURL}" target="_blank" style="margin-left: 10px; color: #4a1d1d;"><i class="fas fa-eye" title="View"></i></a>
-                        <a href="${fileURL}" download="${file.name}" style="margin-left: 10px; color: #4a1d1d;"><i class="fas fa-download" title="Download"></i></a>
-                    </div>
-                </div>
-            `;
-        }
     }
-}
+
+    if (deleteUserBtn) {
+        deleteUserBtn.addEventListener('click', async function () {
+            if (!employeeId) return;
+            const confirmation = await Swal.fire({
+                title: 'Delete employee?',
+                text: 'This action cannot be undone.',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#800000',
+                confirmButtonText: 'Yes, delete user',
+            });
+
+            if (!confirmation.isConfirmed) return;
+
+            const response = await fetch(`/api/employees/${encodeURIComponent(employeeId)}`, { method: 'DELETE' });
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({ detail: 'Unable to delete employee.' }));
+                Swal.fire({ icon: 'error', title: 'Delete failed', text: err.detail || 'Unable to delete employee.' });
+                return;
+            }
+
+            Swal.fire({ icon: 'success', title: 'Deleted', text: 'Employee record has been deleted.' }).then(() => {
+                window.location.href = 'hr_employeelist.html';
+            });
+        });
+    }
+
+    loadEmployee();
+});

@@ -1420,11 +1420,102 @@ def get_employee_detail(
     current_user: User = Depends(require_roles(UserRole.admin, UserRole.school_director, UserRole.hr_evaluator, UserRole.hr_head, UserRole.department_head)),
     db: Session = Depends(get_db),
 ):
-    user = db.query(User).filter(User.id == employee_id).first()
+    user = db.query(User).filter(User.id == employee_id, User.role == UserRole.employee).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+    return build_employee_detail_payload(user, db)
+
+
+@app.post("/api/employees")
+async def create_employee_record(
+    request: Request,
+    current_user: User = Depends(require_roles(UserRole.admin, UserRole.school_director, UserRole.hr_evaluator, UserRole.hr_head)),
+    db: Session = Depends(get_db),
+):
+    form = await request.form()
+    username = str(form.get("username") or "").strip()
+    first_name = str(form.get("first_name") or form.get("firstName") or "").strip()
+    last_name = str(form.get("last_name") or form.get("lastName") or "").strip()
+    employee_no = str(form.get("employee_id") or form.get("employee_no") or "").strip()
+    email = str(form.get("email") or "").strip().lower()
+
+    if not username or not first_name or not last_name or not email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing required fields")
+
+    existing = db.query(User).filter((User.username == username) | (User.email == email)).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username or email already exists")
+
+    if employee_no:
+        existing_employee_no = db.query(User).filter(User.employee_no == employee_no).first()
+        if existing_employee_no:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Employee ID already exists")
+
+    new_user = User(
+        employee_no=employee_no or None,
+        full_name=f"{first_name} {last_name}".strip(),
+        username=username,
+        email=email,
+        hashed_password=hash_password("ChangeMe123!"),
+        role=UserRole.employee,
+        is_active=True,
+        must_change_password=True,
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return build_employee_detail_payload(new_user, db)
+
+
+@app.put("/api/employees/{employee_id}")
+async def update_employee_record(
+    employee_id: int,
+    request: Request,
+    current_user: User = Depends(require_roles(UserRole.admin, UserRole.school_director, UserRole.hr_evaluator, UserRole.hr_head)),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == employee_id, User.role == UserRole.employee).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
 
+    form = await request.form()
+    username = str(form.get("username") or user.username).strip()
+    first_name = str(form.get("first_name") or form.get("firstName") or split_name(str(user.full_name))[0]).strip()
+    last_name = str(form.get("last_name") or form.get("lastName") or split_name(str(user.full_name))[1]).strip()
+    employee_no = str(form.get("employee_id") or form.get("employee_no") or (user.employee_no or "")).strip()
+    email = str(form.get("email") or user.email).strip().lower()
+
+    existing = db.query(User).filter(((User.username == username) | (User.email == email)), User.id != employee_id).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username or email already exists")
+
+    if employee_no:
+        existing_employee_no = db.query(User).filter(User.employee_no == employee_no, User.id != employee_id).first()
+        if existing_employee_no:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Employee ID already exists")
+
+    user.username = username
+    user.full_name = f"{first_name} {last_name}".strip()
+    user.email = email
+    user.employee_no = employee_no or None
+    db.commit()
+    db.refresh(user)
     return build_employee_detail_payload(user, db)
+
+
+@app.delete("/api/employees/{employee_id}")
+def delete_employee_record(
+    employee_id: int,
+    current_user: User = Depends(require_roles(UserRole.admin, UserRole.school_director, UserRole.hr_evaluator, UserRole.hr_head)),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == employee_id, User.role == UserRole.employee).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+
+    db.delete(user)
+    db.commit()
+    return {"message": "Employee deleted successfully."}
 
 
 @app.post("/api/position-requests")

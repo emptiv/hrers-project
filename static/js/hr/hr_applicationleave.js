@@ -12,6 +12,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const menuItems = document.querySelectorAll(".menu-item");
 
     let selectedFileName = "No Document Attached";
+    let sickLeaveCredits = null;
+
+    async function loadLeaveCredits() {
+        try {
+            const response = await fetch('/api/leave-credits');
+            if (!response.ok) return;
+            const payload = await response.json();
+            sickLeaveCredits = Number(payload.remaining);
+        } catch (error) {
+        }
+    }
 
     // --- Sidebar & Tooltips ---
     menuItems.forEach(item => {
@@ -53,7 +64,6 @@ document.addEventListener('DOMContentLoaded', () => {
         leaveForm.onsubmit = async (e) => {
             e.preventDefault();
 
-            const TOTAL_SICK_CREDITS = 15;
             const activeBtn = document.querySelector('.type-btn.active');
             const leaveType = activeBtn ? activeBtn.innerText : "General Leave";
             const startDateVal = document.getElementsByName('start_date')[0].value;
@@ -103,7 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Prepare Notification Message
             let finalMessage = "Leave request submitted successfully!";
             if (leaveType.toLowerCase().includes("sick")) {
-                const remaining = TOTAL_SICK_CREDITS - diffDays;
+                const remaining = Math.max(0, Number(sickLeaveCredits ?? 0) - diffDays);
                 finalMessage = `Success! You have ${remaining} sick leave credits remaining.`;
             }
 
@@ -116,9 +126,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 timer: 3500,
                 timerProgressBar: true
             }).then(() => {
-                // Redirecting without saving to LocalStorage
-                window.location.href = '/templates/hr/hr_leaverequest.html';
+                window.location.href = 'hr_leaverequest.html';
             });
         };
     }
+
+    loadLeaveCredits();
 });

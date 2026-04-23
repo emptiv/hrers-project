@@ -1,161 +1,167 @@
 document.addEventListener('DOMContentLoaded', () => {
-    // --- SIDEBAR ELEMENTS ---
     const sidebar = document.getElementById('sidebar');
     const logoToggle = document.getElementById('logoToggle');
     const closeBtn = document.getElementById('closeBtn');
     const menuItems = document.querySelectorAll('.menu-item');
 
-    // --- SIDEBAR TOGGLE & GLIDE LOGIC ---
-    if (logoToggle) {
-        logoToggle.addEventListener('click', () => sidebar.classList.toggle('close'));
-    }
-    if (closeBtn) {
-        closeBtn.addEventListener('click', () => sidebar.classList.add('close'));
-    }
-
-    // --- AUTOMATIC TOOLTIP LABELS ---
-    // This pulls text from the span and puts it into data-text for the CSS tooltip
+    // 1. Tooltip Fix: Automatically set labels
     menuItems.forEach(item => {
         const span = item.querySelector('span');
         if (span) {
-            item.setAttribute('data-text', span.innerText);
+            item.setAttribute('data-text', span.innerText.trim());
         }
     });
 
-    // --- TAB SWITCHING LOGIC ---
+    // 2. Sidebar Toggle Logic
+    if (logoToggle) {
+        logoToggle.onclick = () => sidebar.classList.toggle('close');
+    }
+    if (closeBtn) {
+        closeBtn.onclick = () => sidebar.classList.add('close');
+    }
+
+    // 3. Tabs Logic
     const tabs = document.querySelectorAll('.tab');
     const tabContents = document.querySelectorAll('.tab-content-item');
-
     tabs.forEach(tab => {
         tab.addEventListener('click', () => {
             tabs.forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
-
-            tabContents.forEach(content => content.classList.remove('active'));
-
-            const target = tab.getAttribute('data-tab');
-            document.getElementById(target).classList.add('active');
+            tabContents.forEach(c => c.classList.remove('active'));
+            const targetId = tab.getAttribute('data-tab');
+            const targetContent = document.getElementById(targetId);
+            if (targetContent) targetContent.classList.add('active');
         });
     });
 
-    // --- FILE UPLOAD & STATUS CHANGE LOGIC ---
-    const uploaders = document.querySelectorAll('.file-uploader');
+    const params = new URLSearchParams(window.location.search);
+    const employeeId = params.get('employee_id') || params.get('id');
 
-    uploaders.forEach(uploader => {
-        uploader.addEventListener('change', function() {
-            if (this.files && this.files[0]) {
-                const file = this.files[0];
-                const row = this.closest('tr');
-                
-                const statusCell = row.querySelector('.status-cell');
-                const dateCell = row.querySelector('.date-cell');
-                const actionCell = row.querySelector('.action-cell');
-
-                statusCell.textContent = "Valid";
-                statusCell.style.color = "#28a745";
-
-                const today = new Date().toLocaleDateString('en-US', { 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric' 
-                });
-                dateCell.textContent = today;
-
-                const fileURL = URL.createObjectURL(file);
-
-                actionCell.innerHTML = `
-                    <a href="${fileURL}" target="_blank" title="View Document">
-                        <i class="fas fa-eye"></i>
-                    </a>
-                    <a href="${fileURL}" download="${file.name}" title="Download Document">
-                        <i class="fas fa-download"></i>
-                    </a>
-                `;
-            }
-        });
-    });
-
-    // --- HISTORY MODAL LOGIC ---
-    const modal = document.getElementById('historyModal');
-    const openBtn = document.getElementById('openHistoryModal');
-    const closeBtnModal = document.getElementById('closeHistoryModal');
-    const saveBtn = document.getElementById('saveEventBtn');
-
-    // Open Modal
-    if (openBtn) {
-        openBtn.addEventListener('click', () => {
-            modal.style.display = "block";
-        });
-    }
-
-    // Close Modal via 'X'
-    if (closeBtnModal) {
-        closeBtnModal.addEventListener('click', () => {
-            modal.style.display = "none";
-        });
-    }
-
-    // Close Modal by clicking outside the box
-    window.addEventListener('click', (event) => {
-        if (event.target == modal) {
-            modal.style.display = "none";
+    async function loadEmployeeDetail() {
+        if (!employeeId) {
+            return;
         }
+
+        try {
+            const response = await fetch(`/api/employees/${encodeURIComponent(employeeId)}`);
+            if (!response.ok) return;
+
+            const profile = await response.json();
+            const nameEl = document.querySelector('.profile-info h2');
+            const roleEl = document.querySelector('.profile-info .role');
+            const employeeIdEl = document.querySelector('.profile-info .employee-id');
+
+            if (nameEl) nameEl.textContent = profile.fullName || '--';
+            if (roleEl) roleEl.textContent = profile.position || profile.roleLabel || '--';
+            if (employeeIdEl) employeeIdEl.textContent = `Employee ID: ${profile.employeeNo || profile.id || '--'}`;
+
+            const details = document.querySelectorAll('.employment-details p');
+            if (details[0]) details[0].innerHTML = `<strong>Status</strong> <span class="status-dot" style="background:${profile.isActive ? '#8ddf9b' : '#f08d8d'}"></span> ${profile.isActive ? 'Active' : 'Inactive'}`;
+            if (details[1]) details[1].innerHTML = `<strong>Position</strong> ${profile.position || '--'}`;
+            if (details[2]) details[2].innerHTML = `<strong>Department</strong> ${profile.department || '--'}`;
+            if (details[3]) details[3].innerHTML = `<strong>Employment Type</strong> ${profile.employmentType || '--'}`;
+            if (details[4]) details[4].innerHTML = `<strong>Date Hired</strong> ${profile.dateHired || '--'}`;
+
+            const contactLines = document.querySelectorAll('.contact-info p');
+            if (contactLines[0]) contactLines[0].innerHTML = `<i class="fas fa-envelope"></i> ${profile.email || '--'}`;
+            if (contactLines[1]) contactLines[1].innerHTML = `<i class="fas fa-phone"></i> ${profile.contactNumber || '--'}`;
+            if (contactLines[2]) contactLines[2].innerHTML = `<i class="fas fa-location-dot"></i> ${profile.address || '--'}`;
+
+            const departmentRows = document.querySelectorAll('.info-row');
+            if (departmentRows[0]) departmentRows[0].querySelectorAll('span')[1].textContent = profile.department || '--';
+            if (departmentRows[1]) departmentRows[1].querySelectorAll('span')[1].textContent = '--';
+            if (departmentRows[2]) departmentRows[2].querySelectorAll('span')[1].textContent = '--';
+            if (departmentRows[3]) departmentRows[3].querySelectorAll('span')[1].textContent = '--';
+            if (departmentRows[4]) departmentRows[4].querySelectorAll('span')[1].textContent = '--';
+
+            const timeline = document.getElementById('timelineContainer');
+            if (timeline) {
+                timeline.innerHTML = '<div class="timeline-item"><div class="timeline-date">--</div><div class="timeline-content"><h4>No history available</h4><p>Employment history has not been recorded yet.</p></div></div>';
+            }
+
+            const docTable = document.querySelector('.doc-table tbody');
+            if (docTable) {
+                docTable.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:2rem;">No document records in database.</td></tr>';
+            }
+
+            const profileImg = document.querySelector('.profile-img');
+            if (profileImg) profileImg.alt = profile.fullName || 'Employee photo';
+
+            const editBtn = document.querySelector('.edit-btn');
+            if (editBtn) {
+                editBtn.onclick = function () {
+                    window.location.href = `hr_employee_edit.html?employee_id=${encodeURIComponent(profile.id)}`;
+                };
+            }
+        } catch (error) {
+        }
+    }
+
+    function isPlaceholderHref(hrefValue) {
+        if (!hrefValue) return true;
+        const normalized = hrefValue.trim().toLowerCase();
+        return normalized === '#' || normalized === 'javascript:void(0)' || normalized === 'javascript:;';
+    }
+
+    function showFileUnavailableMessage(docName) {
+        const message = `No uploaded file is available yet for "${docName}".`;
+        if (window.Swal && typeof window.Swal.fire === 'function') {
+            window.Swal.fire({
+                icon: 'info',
+                title: 'File Unavailable',
+                text: message,
+                confirmButtonColor: '#4a1d1d',
+            });
+            return;
+        }
+        const toast = document.createElement('div');
+        toast.style.position = 'fixed';
+        toast.style.top = '20px';
+        toast.style.right = '20px';
+        toast.style.zIndex = '9999';
+        toast.style.background = '#4a1d1d';
+        toast.style.color = '#fff';
+        toast.style.padding = '10px 14px';
+        toast.style.borderRadius = '8px';
+        toast.style.fontSize = '0.9rem';
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        setTimeout(function () {
+            toast.remove();
+        }, 2200);
+    }
+
+    const actionCells = document.querySelectorAll('.action-cell');
+    actionCells.forEach(cell => {
+        const links = cell.querySelectorAll('a');
+        
+        links.forEach(link => {
+            link.addEventListener('click', (e) => {
+                const isDownload = link.hasAttribute('download') || link.querySelector('.fa-download');
+                const isView = link.querySelector('.fa-eye');
+                
+                // Get document details from the current row.
+                const row = link.closest('tr');
+                const docName = row ? row.cells[0].innerText.trim() : "Document";
+                const href = link.getAttribute('href') || '';
+                const isPlaceholderLink = isPlaceholderHref(href);
+
+                if (isDownload) {
+                    if (isPlaceholderLink) {
+                        e.preventDefault();
+                        showFileUnavailableMessage(docName);
+                    }
+                } 
+                
+                else if (isView) {
+                    if (isPlaceholderLink) {
+                        e.preventDefault();
+                        showFileUnavailableMessage(docName);
+                    }
+                }
+            });
+        });
     });
 
-    // Save Event Logic
-    if (saveBtn) {
-        saveBtn.addEventListener('click', () => {
-            const dateVal = document.getElementById('eventDate').value;
-            const titleVal = document.getElementById('eventTitle').value;
-            const descVal = document.getElementById('eventDesc').value;
-
-            if (dateVal && titleVal && descVal) {
-                const timeline = document.getElementById('timelineContainer');
-                
-                const newItem = document.createElement('div');
-                newItem.classList.add('timeline-item');
-                
-                newItem.innerHTML = `
-                    <div class="timeline-date">${dateVal}</div>
-                    <div class="timeline-content">
-                        <h4>${titleVal}</h4>
-                        <p>${descVal}</p>
-                    </div>
-                `;
-
-                timeline.prepend(newItem);
-
-                // Reset and Close
-                modal.style.display = "none";
-                document.getElementById('eventDate').value = "";
-                document.getElementById('eventTitle').value = "";
-                document.getElementById('eventDesc').value = "";
-            } else {
-                if (window.Swal && typeof window.Swal.fire === 'function') {
-                    window.Swal.fire({
-                        icon: 'warning',
-                        title: 'Missing fields',
-                        text: 'Please fill in all fields before saving.',
-                        confirmButtonColor: '#4a1d1d',
-                    });
-                } else {
-                    const toast = document.createElement('div');
-                    toast.style.position = 'fixed';
-                    toast.style.top = '20px';
-                    toast.style.right = '20px';
-                    toast.style.zIndex = '9999';
-                    toast.style.background = '#4a1d1d';
-                    toast.style.color = '#fff';
-                    toast.style.padding = '10px 14px';
-                    toast.style.borderRadius = '8px';
-                    toast.style.fontSize = '0.9rem';
-                    toast.textContent = 'Please fill in all fields before saving.';
-                    document.body.appendChild(toast);
-                    setTimeout(function () {
-                        toast.remove();
-                    }, 2200);
-                }
-            }
-        });
-    }
+    loadEmployeeDetail();
 });

@@ -64,13 +64,14 @@
                                     <div class="input-item"><label>Employment I.D</label><input type="text" name="employee_id" value=""></div>
                                     <div class="input-item"><label>Employment Type</label>
                                         <select name="employment_type">
+                                            <option value="Full-time">Full-time</option>
                                             <option value="Regular" selected>Regular</option>
                                             <option value="Probationary">Probationary</option>
                                             <option value="Contractual">Contractual</option>
                                         </select>
                                     </div>
                                     <div class="input-item"><label>Department</label>
-                                        <input type="text" value="Unassigned" readonly style="background: #f0f0f0;">
+                                        <input type="text" value="" readonly style="background: #f0f0f0;">
                                     </div>
                                     <div class="input-item"><label>Date Hired</label><input type="text" value="" readonly style="background: #f0f0f0;"></div>
                                 </div>
@@ -113,35 +114,5 @@
     </div>
 
     <script src="../../static/js/hr/hr_employee_edit.js"></script>
-
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const deleteBtn = document.getElementById('deleteUserBtn');
-            if (deleteBtn) {
-                // Clone the button to remove old event listeners from the cached JS
-                const newDeleteBtn = deleteBtn.cloneNode(true);
-                deleteBtn.parentNode.replaceChild(newDeleteBtn, deleteBtn);
-
-                newDeleteBtn.addEventListener('click', function() {
-                    Swal.fire({
-                        title: 'Are you sure?',
-                        text: "This will permanently delete this user.",
-                        icon: 'warning',
-                        showCancelButton: true,
-                        confirmButtonColor: '#800000',
-                        confirmButtonText: 'Yes, delete user'
-                    }).then((result) => {
-                        if (result.isConfirmed) {
-                            Swal.fire({
-                                icon: 'info',
-                                title: 'Delete action',
-                                text: 'Hook this button to your FastAPI delete endpoint.'
-                            });
-                        }
-                    });
-                });
-            }
-        });
-    </script>
 </body>
 </html>
