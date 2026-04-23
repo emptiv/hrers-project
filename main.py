@@ -15,11 +15,13 @@ from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from auth import authenticate_user, create_access_token, get_current_user, hash_password, require_roles
 from database import Base, engine, get_db
 from models import (
+    AuditLog,
     AttendanceRecord,
     AttendanceStatus,
     Department,
@@ -199,6 +201,51 @@ def parse_iso_date(value: str) -> date:
         return datetime.strptime(value, "%Y-%m-%d").date()
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date format") from exc
+
+
+def normalize_status_type(value: str | None) -> str:
+    status_value = str(value or "").strip().lower()
+    if status_value not in {"success", "warning", "failed"}:
+        return "success"
+    return status_value
+
+
+def create_audit_log(
+    db: Session,
+    *,
+    activity_type: str,
+    activity_label: str,
+    status_type: str = "success",
+    description: str | None = None,
+    user: User | None = None,
+    actor: User | None = None,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
+    login_time: datetime | None = None,
+    logout_time: datetime | None = None,
+    occurred_at: datetime | None = None,
+) -> None:
+    log = AuditLog(
+        user_id=int(user.id) if user else None,
+        username=str(user.username) if user else None,
+        email=str(user.email) if user else None,
+        actor_user_id=int(actor.id) if actor else None,
+        actor_name=str(actor.full_name) if actor else (str(user.full_name) if user else None),
+        activity_type=str(activity_type).strip().lower(),
+        activity_label=str(activity_label).strip() or "Activity",
+        status_type=normalize_status_type(status_type),
+        description=(str(description).strip() if description else None),
+        ip_address=str(ip_address).strip() if ip_address else None,
+        user_agent=(str(user_agent).strip()[:255] if user_agent else None),
+        login_time=login_time,
+        logout_time=logout_time,
+        occurred_at=occurred_at or datetime.now(),
+    )
+    db.add(log)
+
+
+def to_iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
 
 
 def can_review_leave(current_user: User, leave_request: LeaveRequest) -> bool:
@@ -514,9 +561,19 @@ def protected_flat_template_page(
 
 
 @app.post("/auth/login", response_model=Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
+        create_audit_log(
+            db,
+            activity_type="failed_login",
+            activity_label="Failed Login",
+            status_type="failed",
+            description="Invalid username/email or password.",
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username/email or password",
@@ -534,11 +591,48 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
         samesite="lax",
         secure=False,
     )
+
+    create_audit_log(
+        db,
+        activity_type="login",
+        activity_label="Login",
+        status_type="success",
+        description="User authenticated successfully.",
+        user=user,
+        actor=user,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        login_time=datetime.now(),
+    )
+    db.commit()
     return response
 
 
 @app.get("/auth/logout")
-def logout() -> RedirectResponse:
+def logout(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    try:
+        current_user = get_current_user(request, db)
+    except HTTPException:
+        current_user = None
+
+    if current_user:
+        create_audit_log(
+            db,
+            activity_type="logout",
+            activity_label="Logout",
+            status_type="success",
+            description="User signed out.",
+            user=current_user,
+            actor=current_user,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            logout_time=datetime.now(),
+        )
+        db.commit()
+
     response = RedirectResponse(url="/login", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
     response.delete_cookie("access_token")
     return response
@@ -811,6 +905,18 @@ async def create_user(current_user: User = Depends(require_roles(UserRole.admin)
     if department:
         set_user_department(db, user, str(department.name))
 
+    create_audit_log(
+        db,
+        activity_type="user_created",
+        activity_label="User Created",
+        status_type="success",
+        description=f"Created user {user.full_name} with role {user.role.value}.",
+        user=user,
+        actor=current_user,
+        ip_address=request.client.host if request and request.client else None,
+        user_agent=request.headers.get("user-agent") if request else None,
+    )
+
     db.commit()
     db.refresh(user)
     return {"message": "User created successfully.", "id": user.id}
@@ -834,6 +940,9 @@ async def edit_user(user_id: int, current_user: User = Depends(require_roles(Use
 
     if not department_id_raw:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Department is required for this role")
+
+    previous_role = str(user.role.value)
+    previous_active = bool(user.is_active)
 
     if first_name and last_name:
         user.full_name = f"{first_name} {last_name}".strip()
@@ -872,6 +981,18 @@ async def edit_user(user_id: int, current_user: User = Depends(require_roles(Use
     if department:
         set_user_department(db, user, str(department.name))
 
+    create_audit_log(
+        db,
+        activity_type="user_edited",
+        activity_label="User Edited",
+        status_type="success",
+        description=f"Updated user {user.full_name}. Previous role: {previous_role}; new role: {user.role.value}. Active: {previous_active} -> {bool(user.is_active)}.",
+        user=user,
+        actor=current_user,
+        ip_address=request.client.host if request and request.client else None,
+        user_agent=request.headers.get("user-agent") if request else None,
+    )
+
     db.commit()
     return {"message": "User updated successfully."}
 
@@ -887,6 +1008,7 @@ async def assign_role(current_user: User = Depends(require_roles(UserRole.admin)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
+    previous_role = str(user.role.value)
     user.role = role
     if role == UserRole.department_head and department_id_raw:
         try:
@@ -897,6 +1019,18 @@ async def assign_role(current_user: User = Depends(require_roles(UserRole.admin)
         if not department:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Department not found")
         department.head_user_id = user.id
+
+    create_audit_log(
+        db,
+        activity_type="role_changed",
+        activity_label="Role Changed",
+        status_type="success",
+        description=f"Changed role for {user.full_name} from {previous_role} to {user.role.value}.",
+        user=user,
+        actor=current_user,
+        ip_address=request.client.host if request and request.client else None,
+        user_agent=request.headers.get("user-agent") if request else None,
+    )
 
     db.commit()
     return {"message": "Role assigned successfully."}
@@ -918,6 +1052,19 @@ async def reset_password(current_user: User = Depends(require_roles(UserRole.adm
 
     user.hashed_password = hash_password(password)
     user.must_change_password = True
+
+    create_audit_log(
+        db,
+        activity_type="password_changed",
+        activity_label="Password Changed",
+        status_type="warning",
+        description=f"Password reset for {user.full_name}.",
+        user=user,
+        actor=current_user,
+        ip_address=request.client.host if request and request.client else None,
+        user_agent=request.headers.get("user-agent") if request else None,
+    )
+
     db.commit()
     return {"message": "Password reset successfully."}
 
@@ -935,9 +1082,31 @@ async def update_account_status(current_user: User = Depends(require_roles(UserR
     if action in {"deactivate", "lock"}:
         for user in users:
             user.is_active = False
+            create_audit_log(
+                db,
+                activity_type="account_deactivated",
+                activity_label="Account Deactivated",
+                status_type="warning",
+                description=f"Account deactivated for {user.full_name}.",
+                user=user,
+                actor=current_user,
+                ip_address=request.client.host if request and request.client else None,
+                user_agent=request.headers.get("user-agent") if request else None,
+            )
     elif action in {"activate", "unlock"}:
         for user in users:
             user.is_active = True
+            create_audit_log(
+                db,
+                activity_type="account_activated",
+                activity_label="Account Activated",
+                status_type="success",
+                description=f"Account activated for {user.full_name}.",
+                user=user,
+                actor=current_user,
+                ip_address=request.client.host if request and request.client else None,
+                user_agent=request.headers.get("user-agent") if request else None,
+            )
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid action")
 
@@ -953,7 +1122,24 @@ async def delete_user(current_user: User = Depends(require_roles(UserRole.admin)
     if not user_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No users selected")
 
-    db.query(User).filter(User.id.in_(user_ids)).delete(synchronize_session=False)
+    users = db.query(User).filter(User.id.in_(user_ids)).all()
+    if not users:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No matching users found")
+
+    for user in users:
+        create_audit_log(
+            db,
+            activity_type="user_deleted",
+            activity_label="User Deleted",
+            status_type="warning",
+            description=f"Deleted user {user.full_name} ({user.username}).",
+            user=user,
+            actor=current_user,
+            ip_address=request.client.host if request and request.client else None,
+            user_agent=request.headers.get("user-agent") if request else None,
+        )
+        db.delete(user)
+
     db.commit()
     return {"message": "User(s) deleted successfully."}
 
@@ -1747,6 +1933,8 @@ def admin_audit_trails(
     to_date: str | None = None,
     action_type: str | None = None,
     status: str | None = None,
+    page: int = 1,
+    page_size: int = 10,
     current_user: User = Depends(require_roles(UserRole.admin)),
     db: Session = Depends(get_db),
 ):
@@ -1758,174 +1946,118 @@ def admin_audit_trails(
         except ValueError:
             return None
 
-    def to_iso(value: datetime | None) -> str | None:
-        return value.isoformat() if value else None
-
     from_date_obj = parse_date(from_date)
     to_date_obj = parse_date(to_date)
     search_term = (search or "").strip().lower()
     action_filter = (action_type or "").strip().lower()
     status_filter = (status or "").strip().lower()
 
-    users = db.query(User).all()
-    user_by_id = {int(item.id): item for item in users}
+    if page < 1:
+        page = 1
+    if page_size < 1:
+        page_size = 10
+    page_size = min(page_size, 100)
 
-    login_logs: list[dict[str, object]] = []
-    attendance_rows = (
-        db.query(AttendanceRecord)
-        .order_by(AttendanceRecord.record_date.desc(), AttendanceRecord.updated_at.desc(), AttendanceRecord.id.desc())
-        .limit(300)
-        .all()
-    )
-    for row in attendance_rows:
-        user = user_by_id.get(int(row.user_id))
-        if not user:
-            continue
+    query = db.query(AuditLog)
 
-        if row.status in {AttendanceStatus.present, AttendanceStatus.late}:
-            status_type = "success"
-        elif row.status in {AttendanceStatus.leave, AttendanceStatus.holiday}:
-            status_type = "warning"
-        else:
-            status_type = "failed"
+    if status_filter in {"success", "warning", "failed"}:
+        query = query.filter(AuditLog.status_type == status_filter)
 
-        login_logs.append(
-            {
-                "id": f"att-{row.id}",
-                "username": str(user.username),
-                "email": str(user.email),
-                "loginTime": to_iso(row.time_in),
-                "logoutTime": to_iso(row.time_out),
-                "recordDate": row.record_date.isoformat() if row.record_date else None,
-                "ipAddress": "N/A",
-                "userAgent": "N/A",
-                "status": status_type.title(),
-                "statusType": status_type,
-                "notes": str(row.notes or "Attendance-based access log."),
-            }
-        )
+    if from_date_obj:
+        start_dt = datetime.combine(from_date_obj, datetime.min.time())
+        query = query.filter(AuditLog.occurred_at >= start_dt)
+    if to_date_obj:
+        end_dt = datetime.combine(to_date_obj, datetime.max.time())
+        query = query.filter(AuditLog.occurred_at <= end_dt)
 
-    activity_logs: list[dict[str, object]] = []
-    for item in users:
-        created_at = item.created_at
-        activity_logs.append(
-            {
-                "id": f"user-created-{item.id}",
-                "activityType": "user_created",
-                "activityLabel": "User Created",
-                "actor": "System",
-                "user": str(item.full_name),
-                "email": str(item.email),
-                "ipAddress": "N/A",
-                "description": f"User account created with role {str(item.role.value).replace('_', ' ').title()}.",
-                "status": "Success",
-                "statusType": "success",
-                "timestamp": to_iso(created_at),
-            }
-        )
-
-        if item.updated_at and item.created_at and item.updated_at > item.created_at + timedelta(seconds=1):
-            status_type = "success" if bool(item.is_active) else "warning"
-            activity_logs.append(
-                {
-                    "id": f"user-updated-{item.id}",
-                    "activityType": "account_activated" if bool(item.is_active) else "account_deactivated",
-                    "activityLabel": "Account Activated" if bool(item.is_active) else "Account Deactivated",
-                    "actor": "System",
-                    "user": str(item.full_name),
-                    "email": str(item.email),
-                    "ipAddress": "N/A",
-                    "description": "User account record was updated.",
-                    "status": status_type.title(),
-                    "statusType": status_type,
-                    "timestamp": to_iso(item.updated_at),
-                }
+    if search_term:
+        pattern = f"%{search_term}%"
+        query = query.filter(
+            or_(
+                AuditLog.username.ilike(pattern),
+                AuditLog.email.ilike(pattern),
+                AuditLog.ip_address.ilike(pattern),
+                AuditLog.user_agent.ilike(pattern),
+                AuditLog.description.ilike(pattern),
+                AuditLog.actor_name.ilike(pattern),
             )
-
-    position_rows = (
-        db.query(PositionChangeRequest)
-        .order_by(PositionChangeRequest.updated_at.desc(), PositionChangeRequest.id.desc())
-        .limit(200)
-        .all()
-    )
-    for item in position_rows:
-        status_type = "success" if item.status == PositionChangeStatus.approved else ("warning" if item.status == PositionChangeStatus.pending else "failed")
-        activity_logs.append(
-            {
-                "id": f"position-{item.id}",
-                "activityType": "role_changed",
-                "activityLabel": "Role Changed",
-                "actor": str(item.reviewed_by_name or "System"),
-                "user": str(item.employee_name),
-                "email": "",
-                "ipAddress": "N/A",
-                "description": f"Position request: {item.current_position or 'N/A'} -> {item.requested_position} ({item.status.value}).",
-                "status": status_type.title(),
-                "statusType": status_type,
-                "timestamp": to_iso(item.updated_at or item.created_at),
-            }
         )
 
-    def within_date(value: str | None) -> bool:
-        if not value:
-            return True
-        try:
-            dt_value = datetime.fromisoformat(value)
-        except ValueError:
-            return True
-        day_value = dt_value.date()
-        if from_date_obj and day_value < from_date_obj:
-            return False
-        if to_date_obj and day_value > to_date_obj:
-            return False
-        return True
+    login_types = ["login", "logout", "failed_login"]
+    login_query = query.filter(AuditLog.activity_type.in_(login_types))
+    activity_query = query.filter(~AuditLog.activity_type.in_(login_types))
 
-    def matches_search(parts: list[str]) -> bool:
-        if not search_term:
-            return True
-        return search_term in " ".join(parts).lower()
+    if action_filter:
+        if action_filter in login_types:
+            login_query = login_query.filter(AuditLog.activity_type == action_filter)
+            activity_query = activity_query.filter(and_(AuditLog.id == -1))
+        else:
+            login_query = login_query.filter(and_(AuditLog.id == -1))
+            activity_query = activity_query.filter(AuditLog.activity_type == action_filter)
 
-    filtered_login_logs: list[dict[str, object]] = []
-    for item in login_logs:
-        action_bucket = "failed_login" if item["statusType"] == "failed" else "login"
-        if action_filter and action_filter not in {"login", "logout", "failed_login"}:
-            continue
-        if action_filter == "logout" and not item.get("logoutTime"):
-            continue
-        if action_filter == "failed_login" and action_bucket != "failed_login":
-            continue
-        if status_filter and item["statusType"] != status_filter:
-            continue
-        if not within_date(item.get("loginTime") or item.get("recordDate")):  # type: ignore[arg-type]
-            continue
-        if not matches_search([str(item.get("username", "")), str(item.get("email", "")), str(item.get("ipAddress", ""))]):
-            continue
-        filtered_login_logs.append(item)
+    total_login = login_query.count()
+    total_activity = activity_query.count()
+    max_total = max(total_login, total_activity)
+    total_pages = max(1, (max_total + page_size - 1) // page_size)
+    page = min(page, total_pages)
+    offset = (page - 1) * page_size
 
-    filtered_activity_logs: list[dict[str, object]] = []
-    for item in activity_logs:
-        if action_filter and item["activityType"] != action_filter:
-            continue
-        if status_filter and item["statusType"] != status_filter:
-            continue
-        if not within_date(str(item.get("timestamp") or "")):
-            continue
-        if not matches_search([
-            str(item.get("user", "")),
-            str(item.get("email", "")),
-            str(item.get("description", "")),
-            str(item.get("ipAddress", "")),
-            str(item.get("actor", "")),
-        ]):
-            continue
-        filtered_activity_logs.append(item)
+    login_rows = (
+        login_query
+        .order_by(AuditLog.occurred_at.desc(), AuditLog.id.desc())
+        .offset(offset)
+        .limit(page_size)
+        .all()
+    )
 
-    filtered_login_logs.sort(key=lambda x: str(x.get("loginTime") or x.get("recordDate") or ""), reverse=True)
-    filtered_activity_logs.sort(key=lambda x: str(x.get("timestamp") or ""), reverse=True)
+    activity_rows = (
+        activity_query
+        .order_by(AuditLog.occurred_at.desc(), AuditLog.id.desc())
+        .offset(offset)
+        .limit(page_size)
+        .all()
+    )
 
     return {
-        "loginLogs": filtered_login_logs[:200],
-        "activityLogs": filtered_activity_logs[:300],
+        "loginLogs": [
+            {
+                "id": item.id,
+                "username": item.username,
+                "email": item.email,
+                "loginTime": to_iso(item.login_time or item.occurred_at),
+                "logoutTime": to_iso(item.logout_time),
+                "recordDate": item.occurred_at.date().isoformat() if item.occurred_at else None,
+                "ipAddress": item.ip_address or "N/A",
+                "userAgent": item.user_agent or "N/A",
+                "status": normalize_status_type(item.status_type).title(),
+                "statusType": normalize_status_type(item.status_type),
+                "notes": item.description or "",
+            }
+            for item in login_rows
+        ],
+        "activityLogs": [
+            {
+                "id": item.id,
+                "activityType": item.activity_type,
+                "activityLabel": item.activity_label,
+                "actor": item.actor_name or "System",
+                "user": item.username or "N/A",
+                "email": item.email or "",
+                "ipAddress": item.ip_address or "N/A",
+                "description": item.description or "",
+                "status": normalize_status_type(item.status_type).title(),
+                "statusType": normalize_status_type(item.status_type),
+                "timestamp": to_iso(item.occurred_at),
+            }
+            for item in activity_rows
+        ],
+        "pagination": {
+            "page": page,
+            "pageSize": page_size,
+            "totalPages": total_pages,
+            "totalLogin": total_login,
+            "totalActivity": total_activity,
+        },
     }
 
 

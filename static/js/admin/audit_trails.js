@@ -5,6 +5,9 @@
 let renderedLoginLogs = [];
 let renderedActivityLogs = [];
 const loginLogById = new Map();
+let currentPage = 1;
+let totalPages = 1;
+const pageSize = 10;
 
 document.addEventListener('DOMContentLoaded', function() {
     initializeAuditTrails();
@@ -36,6 +39,34 @@ function setupEventListeners() {
     });
 
     document.getElementById('auditSearch')?.addEventListener('keyup', debounce(applyFilters, 300));
+
+    document.getElementById('pageFirst')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (currentPage === 1) return;
+        currentPage = 1;
+        loadAuditData();
+    });
+
+    document.getElementById('pagePrev')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (currentPage <= 1) return;
+        currentPage -= 1;
+        loadAuditData();
+    });
+
+    document.getElementById('pageNext')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (currentPage >= totalPages) return;
+        currentPage += 1;
+        loadAuditData();
+    });
+
+    document.getElementById('pageLast')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (currentPage === totalPages) return;
+        currentPage = totalPages;
+        loadAuditData();
+    });
 }
 
 function setupDatePickers() {
@@ -68,6 +99,8 @@ async function loadAuditData() {
     Object.entries(filters).forEach(([key, value]) => {
         if (value) params.set(key, value);
     });
+    params.set('page', String(currentPage));
+    params.set('page_size', String(pageSize));
 
     try {
         const response = await fetch(`/api/admin/audit-trails?${params.toString()}`);
@@ -79,16 +112,43 @@ async function loadAuditData() {
         renderedLoginLogs = Array.isArray(payload.loginLogs) ? payload.loginLogs : [];
         renderedActivityLogs = Array.isArray(payload.activityLogs) ? payload.activityLogs : [];
 
+        const pagination = payload.pagination || {};
+        currentPage = Number(pagination.page) > 0 ? Number(pagination.page) : currentPage;
+        totalPages = Number(pagination.totalPages) > 0 ? Number(pagination.totalPages) : 1;
+
         loginLogById.clear();
         renderedLoginLogs.forEach((item) => loginLogById.set(String(item.id), item));
 
         renderLoginLogs(renderedLoginLogs);
         renderActivityLogs(renderedActivityLogs);
+        renderPagination();
     } catch (error) {
         renderLoginLogs([]);
         renderActivityLogs([]);
+        totalPages = 1;
+        renderPagination();
         showAlert('Failed to load audit data from database.', 'danger');
     }
+}
+
+function renderPagination() {
+    const pageNumbers = document.getElementById('pageNumbers');
+    if (pageNumbers) {
+        pageNumbers.textContent = `Page ${currentPage} of ${totalPages}`;
+    }
+
+    setPaginationDisabled('pageFirst', currentPage <= 1);
+    setPaginationDisabled('pagePrev', currentPage <= 1);
+    setPaginationDisabled('pageNext', currentPage >= totalPages);
+    setPaginationDisabled('pageLast', currentPage >= totalPages);
+}
+
+function setPaginationDisabled(elementId, disabled) {
+    const element = document.getElementById(elementId);
+    if (!element) return;
+    element.style.pointerEvents = disabled ? 'none' : 'auto';
+    element.style.opacity = disabled ? '0.45' : '1';
+    element.setAttribute('aria-disabled', disabled ? 'true' : 'false');
 }
 
 function renderLoginLogs(items) {
@@ -172,19 +232,27 @@ function iconForActivity(activityType) {
 }
 
 function applyFilters() {
+    currentPage = 1;
     loadAuditData();
 }
 
 function clearFilters() {
-    document.getElementById('auditSearch').value = '';
-    document.getElementById('activityFilter').value = '';
-    document.getElementById('statusFilter').value = '';
+    const auditSearch = document.getElementById('auditSearch');
+    const activityFilter = document.getElementById('activityFilter');
+    const statusFilter = document.getElementById('statusFilter');
+
+    if (auditSearch) auditSearch.value = '';
+    if (activityFilter) activityFilter.value = '';
+    if (statusFilter) statusFilter.value = '';
 
     const today = new Date();
     const thirtyDaysAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-    document.getElementById('fromDate').value = thirtyDaysAgo.toISOString().split('T')[0];
-    document.getElementById('toDate').value = today.toISOString().split('T')[0];
+    const fromDate = document.getElementById('fromDate');
+    const toDate = document.getElementById('toDate');
+    if (fromDate) fromDate.value = thirtyDaysAgo.toISOString().split('T')[0];
+    if (toDate) toDate.value = today.toISOString().split('T')[0];
 
+    currentPage = 1;
     loadAuditData();
 }
 

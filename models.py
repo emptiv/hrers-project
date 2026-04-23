@@ -177,3 +177,25 @@ class AttendanceRecord(Base):
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    username = Column(String(80), nullable=True)
+    email = Column(String(255), nullable=True)
+    actor_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    actor_name = Column(String(150), nullable=True)
+    activity_type = Column(String(64), nullable=False, index=True)
+    activity_label = Column(String(120), nullable=False)
+    status_type = Column(String(20), nullable=False, default="success", index=True)
+    description = Column(Text, nullable=True)
+    ip_address = Column(String(64), nullable=True)
+    user_agent = Column(String(255), nullable=True)
+    login_time = Column(DateTime, nullable=True)
+    logout_time = Column(DateTime, nullable=True)
+    occurred_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
