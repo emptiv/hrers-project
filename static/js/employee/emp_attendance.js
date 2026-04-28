@@ -526,6 +526,14 @@ function renderWeekly() {
 
     totalHoursCount.textContent  = data.total;
 
+    // ensure label reflects weekly context
+    try {
+        const labelEl = document.getElementById('hoursSummaryLabel');
+        if (labelEl) labelEl.textContent = 'Total Hours This Week';
+    } catch (e) {
+        // ignore
+    }
+
 
 
     const rows = data.rows.map(r => `
@@ -588,6 +596,14 @@ function renderMonthly() {
     historyDateRange.textContent = data.label;
 
     totalHoursCount.textContent  = data.total;
+
+    // update label to monthly context
+    try {
+        const labelEl = document.getElementById('hoursSummaryLabel');
+        if (labelEl) labelEl.textContent = 'Total Hours This Month';
+    } catch (e) {
+        // ignore
+    }
 
 
 
@@ -833,5 +849,94 @@ function loadEmployeeDetails() {
 
 refreshAttendanceState().then(() => switchView("weekly"));
 loadEmployeeDetails();
+
+// ── Inline weekly summary for main page ─────────────────
+let inlineWeekOffset = 0;
+const weekNavButtons = document.querySelectorAll('.week-nav');
+const attendanceTableBody = document.querySelector('.attendance-table tbody');
+
+async function loadInlineWeeklySummary(offset = 0) {
+    try {
+        const resp = await fetch(`/api/attendance/summary?view=weekly&offset=${encodeURIComponent(offset)}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        renderInlineWeekly(data);
+    } catch (e) {
+        // ignore
+    }
+}
+
+function renderInlineWeekly(data) {
+    console.debug('renderInlineWeekly:', data);
+    const attendanceTableBodyLocal = document.querySelector('.attendance-table tbody');
+    if (!data || !attendanceTableBodyLocal) {
+        console.debug('No data or table body element not found', { found: !!attendanceTableBodyLocal });
+        return;
+    }
+    const rows = data.rows || [];
+    // Build single-row week summary: first cell = week label, then Sunday..Saturday cells
+    let rowHtml = `<tr>`;
+    rowHtml += `<td class="week-label">${escapeHtml(data.label || '')}</td>`;
+    for (let i = 0; i < 7; i++) {
+        const r = rows[i] || { hours: '--', status: '' };
+        const hours = escapeHtml(r.hours || '--');
+        const status = r.status ? `<div class="muted">${escapeHtml(capitalize(r.status || ''))}</div>` : '';
+        rowHtml += `<td>${hours}${status}</td>`;
+    }
+    rowHtml += `</tr>`;
+    attendanceTableBodyLocal.innerHTML = rowHtml;
+    // Update the main page week label (show ISO week number)
+    try {
+        const weekLabelEl = document.querySelector('.week-picker span');
+        if (weekLabelEl) {
+            // derive date from first row if available
+            const firstRowDateStr = (rows && rows.length && rows[0] && rows[0].date) ? rows[0].date : null;
+            let label = data.label || '';
+            if (firstRowDateStr) {
+                const dt = new Date(firstRowDateStr);
+                if (!Number.isNaN(dt.getTime())) {
+                    const wk = getISOWeekNumber(dt);
+                    label = `Week ${wk}`;
+                }
+            }
+            weekLabelEl.textContent = label;
+        }
+    } catch (e) {
+        console.debug('Failed to update week label', e);
+    }
+}
+
+function getISOWeekNumber(date) {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    // Set to nearest Thursday: current date + 4 - current day number
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const weekNo = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+    return weekNo;
+}
+
+if (weekNavButtons && weekNavButtons.length >= 2) {
+    const prevBtn = weekNavButtons[0];
+    const nextBtn = weekNavButtons[1];
+    prevBtn.addEventListener('click', () => {
+        inlineWeekOffset++;
+        loadInlineWeeklySummary(inlineWeekOffset);
+    });
+    nextBtn.addEventListener('click', () => {
+        if (inlineWeekOffset === 0) return;
+        inlineWeekOffset--;
+        loadInlineWeeklySummary(inlineWeekOffset);
+    });
+}
+
+// Load initial inline summary
+loadInlineWeeklySummary(0);
+
+function escapeHtml(str) {
+    return String(str || '').replace(/[&<>\"]/g, function (s) {
+        return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s]);
+    });
+}
 
 
