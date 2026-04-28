@@ -11,6 +11,9 @@ const myTrainingsList = document.getElementById('myTrainingsList');
 const modalOverlay = document.getElementById('modalOverlay');
 const btnCloseModal = document.getElementById('btnCloseModal');
 const btnRegister = document.getElementById('btnRegisterModal');
+const confirmOverlay = document.getElementById('confirmOverlay');
+const confirmYes = document.getElementById('confirmYes');
+const confirmCancel = document.getElementById('confirmCancel');
 
 function normalizeTitle(title) {
     return String(title || '').trim().toLowerCase();
@@ -102,7 +105,8 @@ function renderTrainingCards() {
 
         card.addEventListener('click', function (event) {
             if (event.target.classList.contains('register-btn')) {
-                registerTraining(session.id);
+                    // show confirmation for card register as well
+                    showRegisterConfirm(session);
                 return;
             }
             openModal(session);
@@ -216,8 +220,59 @@ document.addEventListener('keydown', function (event) {
 if (btnRegister) {
     btnRegister.addEventListener('click', function () {
         if (!activeSession) return;
-        registerTraining(activeSession.id);
+        // show confirmation overlay instead of immediately registering
+        if (confirmOverlay && confirmYes && confirmCancel) {
+            document.getElementById('confirmMessage').textContent = `Register for "${activeSession.title}"?`;
+            confirmOverlay.style.display = 'flex';
+
+            const onConfirm = async function () {
+                confirmOverlay.style.display = 'none';
+                // cleanup listeners
+                confirmYes.removeEventListener('click', onConfirm);
+                confirmCancel.removeEventListener('click', onCancel);
+                await registerTraining(activeSession.id);
+            };
+
+            const onCancel = function () {
+                confirmOverlay.style.display = 'none';
+                confirmYes.removeEventListener('click', onConfirm);
+                confirmCancel.removeEventListener('click', onCancel);
+            };
+
+            confirmYes.addEventListener('click', onConfirm);
+            confirmCancel.addEventListener('click', onCancel);
+            return;
+        } else {
+            registerTraining(activeSession.id);
+        }
     });
+}
+
+function showRegisterConfirm(session) {
+    if (!session) return;
+    // if confirm overlay not available, fall back to direct register
+    if (!(confirmOverlay && confirmYes && confirmCancel)) {
+        return registerTraining(session.id);
+    }
+
+    document.getElementById('confirmMessage').textContent = `Register for "${session.title}"?`;
+    confirmOverlay.style.display = 'flex';
+
+    const onConfirm = async function () {
+        confirmOverlay.style.display = 'none';
+        confirmYes.removeEventListener('click', onConfirm);
+        confirmCancel.removeEventListener('click', onCancel);
+        await registerTraining(session.id);
+    };
+
+    const onCancel = function () {
+        confirmOverlay.style.display = 'none';
+        confirmYes.removeEventListener('click', onConfirm);
+        confirmCancel.removeEventListener('click', onCancel);
+    };
+
+    confirmYes.addEventListener('click', onConfirm);
+    confirmCancel.addEventListener('click', onCancel);
 }
 
 document.addEventListener('DOMContentLoaded', function () {

@@ -7,6 +7,54 @@
     <link rel="shortcut icon" type="image/png" href="../../static/img/general/uph.png">
     <link rel="stylesheet" href="../../static/css/training_management/head_training.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+    <style>
+        /* Confirm overlay styled to match training-card UI */
+        .confirm-overlay{
+            position: fixed;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0,0,0,0.35);
+            z-index: 1200;
+            padding: 20px;
+        }
+        .confirm-box{
+            background: #fff;
+            border-radius: 14px;
+            padding: 18px;
+            max-width: 520px;
+            width: 100%;
+            border: 1px solid #e5e5e5;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            align-items: stretch;
+        }
+        .confirm-box h3{ margin:0; font-size:18px; font-weight:700; color:#1a1a1a; }
+        .confirm-box p{ margin:0; color:#555; }
+        .confirm-actions{ display:flex; gap:10px; justify-content:flex-end; margin-top:6px; align-items:center; }
+        .confirm-actions .register-btn,
+        .confirm-actions .btn-cancel {
+            min-width: 140px;
+            height: 40px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 0 18px;
+            box-sizing: border-box;
+            line-height: 1;
+            vertical-align: middle;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .confirm-actions .btn-cancel { background:#f3f3f3; border:1px solid #e0e0e0; color:#333; margin:0; position:relative; top:-2px; }
+        .confirm-actions .btn-cancel:hover{ background:#eaeaea; }
+        .confirm-actions .register-btn { background:#8b1a1a; color:#fff; border:none; margin:0; }
+    </style>
 </head>
 <body>
 
@@ -123,6 +171,18 @@
         <div class="modal-footer">
             <button class="btn-close-modal" id="btnCloseModal">Close</button>
             <button class="btn-register-modal" id="btnRegisterModal">Register</button>
+        </div>
+    </div>
+</div>
+
+<!-- Registration Confirmation Modal -->
+<div class="confirm-overlay" id="confirmOverlay" style="display:none;">
+    <div class="confirm-box">
+        <h3>Confirm Registration</h3>
+        <p id="confirmMessage">Are you sure you want to register for this training?</p>
+        <div class="confirm-actions">
+            <button id="confirmCancel" class="btn-cancel">Cancel</button>
+            <button id="confirmYes" class="register-btn">Yes, Register</button>
         </div>
     </div>
 </div>
