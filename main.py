@@ -577,8 +577,10 @@ def attendance_summary_payload(record: AttendanceRecord | None) -> dict:
 
 
 def build_weekly_attendance_summary(records: list[AttendanceRecord], offset: int) -> dict:
-    target_end = date.today() - timedelta(days=offset * 7)
-    target_start = target_end - timedelta(days=6)
+    today = date.today()
+    days_since_sunday = (today.weekday() + 1) % 7
+    target_start = today - timedelta(days=days_since_sunday + (offset * 7))
+    target_end = target_start + timedelta(days=6)
     week_records = [record for record in records if target_start <= record.record_date <= target_end]
 
     rows = []
@@ -592,7 +594,7 @@ def build_weekly_attendance_summary(records: list[AttendanceRecord], offset: int
                 "timeIn": record.time_in.strftime("%-I:%M %p") if record and record.time_in and os.name != "nt" else (record.time_in.strftime("%#I:%M %p") if record and record.time_in else "--"),
                 "timeOut": record.time_out.strftime("%-I:%M %p") if record and record.time_out and os.name != "nt" else (record.time_out.strftime("%#I:%M %p") if record and record.time_out else "--"),
                 "hours": f"{int(record.worked_seconds or 0) // 3600}h {(int(record.worked_seconds or 0) % 3600) // 60:02d}m" if record else "--",
-                "status": (record.status.value.lower() if record else ("holiday" if current_day.weekday() >= 5 else "absent")),
+                "status": (record.status.value.lower() if record else ("day-off" if current_day.weekday() >= 5 else "absent")),
             }
         )
         current_day += timedelta(days=1)

@@ -895,7 +895,8 @@ function renderInlineWeekly(data) {
             if (firstRowDateStr) {
                 const dt = new Date(firstRowDateStr);
                 if (!Number.isNaN(dt.getTime())) {
-                    const wk = getISOWeekNumber(dt);
+                    // Use week numbers where weeks start on Sunday
+                    const wk = getSundayWeekNumber(dt);
                     label = `Week ${wk}`;
                 }
             }
@@ -913,6 +914,16 @@ function getISOWeekNumber(date) {
     d.setUTCDate(d.getUTCDate() + 4 - dayNum);
     const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
     const weekNo = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+    return weekNo;
+}
+
+// Week number where weeks start on Sunday. Week 1 is the week that contains Jan 1.
+function getSundayWeekNumber(date) {
+    const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const yearStart = new Date(target.getFullYear(), 0, 1);
+    const dayOfYear = Math.floor((target - yearStart) / 86400000);
+    const jan1Day = yearStart.getDay(); // 0 = Sunday
+    const weekNo = Math.floor((dayOfYear + jan1Day) / 7) + 1;
     return weekNo;
 }
 
