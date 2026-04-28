@@ -75,13 +75,89 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (recordsBtn) {
-        recordsBtn.addEventListener('click', () => {
-            const employeeName = empNameInput.value.trim();
-            const recordsUrl = employeeName
-                ? `${recordsPageUrl}?employee=${encodeURIComponent(employeeName)}`
-                : recordsPageUrl;
+        recordsBtn.addEventListener('click', async () => {
+            // Show inline records view and load user's position requests
+            showRecordsView();
+        });
+    }
 
-            window.location.href = recordsUrl;
+    const recordsView = document.getElementById('recordsView');
+    const recordsContainer = document.getElementById('recordsContainer');
+    const tabNew = document.getElementById('tabNewRequest');
+
+    if (tabNew) {
+        tabNew.addEventListener('click', () => {
+            // show form, hide records
+            tabNew.classList.add('active');
+            if (recordsBtn) recordsBtn.classList.remove('active');
+            if (recordsView) recordsView.style.display = 'none';
+            if (positionForm) positionForm.style.display = '';
+        });
+    }
+
+    async function showRecordsView() {
+        if (tabNew) tabNew.classList.remove('active');
+        if (recordsBtn) recordsBtn.classList.add('active');
+        if (positionForm) positionForm.style.display = 'none';
+        if (recordsView) recordsView.style.display = '';
+        if (recordsContainer) {
+            recordsContainer.innerHTML = '<p class="muted">Loading...</p>';
+        }
+        await fetchAndRenderRecords();
+    }
+
+    async function fetchAndRenderRecords() {
+        try {
+            const res = await fetch('/api/position-requests');
+            if (!res.ok) throw new Error('Unable to load records');
+            const payload = await res.json();
+            const items = Array.isArray(payload.items) ? payload.items : [];
+            renderRecords(items);
+        } catch (err) {
+            if (recordsContainer) recordsContainer.innerHTML = `<p class="muted">${err.message}</p>`;
+        }
+    }
+
+    function renderRecords(items) {
+        if (!recordsContainer) return;
+        if (!items || items.length === 0) {
+            recordsContainer.innerHTML = '<p class="muted">You have no position change requests.</p>';
+            return;
+        }
+
+        let html = `
+            <table class="records-table" style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr style="text-align:left; border-bottom:1px solid #ddd;">
+                        <th>Submitted</th>
+                        <th>Requested Position</th>
+                        <th>Effective Date</th>
+                        <th>Status</th>
+                        <th>Remarks</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+        items.forEach(item => {
+            const submitted = item.submittedAt ? new Date(item.submittedAt).toLocaleDateString() : '';
+            const eff = item.effectiveDate ? new Date(item.effectiveDate).toLocaleDateString() : '';
+            const remarks = item.reviewRemarks || '';
+            html += `<tr style="border-bottom:1px solid #f2f2f2;">
+                <td style="padding:8px; vertical-align:top;">${submitted}</td>
+                <td style="padding:8px; vertical-align:top;">${escapeHtml(item.requestedPosition || '')}</td>
+                <td style="padding:8px; vertical-align:top;">${eff}</td>
+                <td style="padding:8px; vertical-align:top;">${escapeHtml(item.status || '')}</td>
+                <td style="padding:8px; vertical-align:top;">${escapeHtml(remarks)}</td>
+            </tr>`;
+        });
+
+        html += '</tbody></table>';
+        recordsContainer.innerHTML = html;
+    }
+
+    function escapeHtml(str) {
+        return String(str || '').replace(/[&<>"]/g, function (s) {
+            return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s]);
         });
     }
 
@@ -131,7 +207,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     showSuccessNotification(`${empName}'s position change request has been successfully submitted.`);
                     setTimeout(() => {
-                        window.location.href = `${recordsPageUrl}?employee=${encodeURIComponent(empName)}`;
+                        try { showRecordsView(); } catch (e) { window.location.href = `${recordsPageUrl}?employee=${encodeURIComponent(empName)}`; }
                     }, 1200);
                 })
                 .catch((error) => {

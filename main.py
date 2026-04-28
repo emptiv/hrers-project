@@ -69,9 +69,9 @@ ROLE_TO_SECTIONS = {
     UserRole.admin: {"admin"},
     UserRole.school_director: {"sd"},
     UserRole.hr_evaluator: {"hr"},
-    UserRole.hr_head: {"hr"},
-    UserRole.department_head: {"head"},
-    UserRole.employee: {"employee"},
+    UserRole.hr_head: {"hr", "history"},
+    UserRole.department_head: {"head", "history"},
+    UserRole.employee: {"employee", "history"},
 }
 
 PUBLIC_SECTIONS = {"login", "application", "accounts"}
@@ -81,7 +81,14 @@ def ensure_role_access(section: str, role: UserRole) -> None:
     if section in PUBLIC_SECTIONS:
         return
 
-    allowed_sections = ROLE_TO_SECTIONS.get(role, set())
+    # Accept either a UserRole enum or a raw string role (some DB adapters may return strings)
+    try:
+        normalized_role = role if isinstance(role, UserRole) else normalize_role(str(role))
+    except HTTPException:
+        # If role cannot be normalized, deny access
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Page not allowed for this role")
+
+    allowed_sections = ROLE_TO_SECTIONS.get(normalized_role, set())
     if section not in allowed_sections:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Page not allowed for this role")
 
