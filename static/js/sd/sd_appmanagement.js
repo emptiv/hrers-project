@@ -1005,6 +1005,5 @@ document.addEventListener('DOMContentLoaded', function () {
     syncFilterChip();
     refreshAppManagementData().then(function () {
         renderCurrentTab();
-        applyEmailDecisionIntent();
     });
 });

@@ -14,7 +14,6 @@ let activeMainTab = 'new';
 let appData = [];
 let positionChangeData = [];
 
-const SD_NOTIFICATION_EMAIL = 'sd@hrers.local';
 
 function mapStatusForHr(status) {
     if (status === 'approved' || status === 'rejected') {
@@ -166,57 +165,6 @@ async function autoFillEmployee(name) {
 
 function generatePCRId() {
     return 'PCR-' + String(positionChangeData.length + 1).padStart(3, '0');
-}
-
-function buildSdReviewMailto(requestLike) {
-    var id = requestLike.id || requestLike.sourceId || '';
-    var numericId = String(id).replace(/^PCR-/, '');
-    var approveUrl = window.location.origin + '/templates/sd/sd_appmanagement.html?positionRequestId=' + encodeURIComponent(numericId) + '&emailDecision=approve';
-    var rejectUrl = window.location.origin + '/templates/sd/sd_appmanagement.html?positionRequestId=' + encodeURIComponent(numericId) + '&emailDecision=reject';
-
-    var subject = 'You have a position change request to review.';
-    var lines = [
-        'Good day School Director,',
-        '',
-        'You have a position change request to review.',
-        '',
-        'Request ID: PCR-' + numericId,
-        'Employee: ' + (requestLike.employeeName || requestLike.name || '--'),
-        'Employee ID: ' + (requestLike.employeeId || requestLike.empId || '--'),
-        'Current Position: ' + (requestLike.currentPosition || requestLike.position || '--'),
-        'Department: ' + (requestLike.currentDepartment || requestLike.dept || '--'),
-        'Requested Position: ' + (requestLike.requestedPosition || requestLike.requestedPos || '--'),
-        'Effective Date: ' + (requestLike.effectiveDate || '--'),
-        'Reason: ' + (requestLike.reason || '--'),
-        '',
-        'Approve: ' + approveUrl,
-        'Reject: ' + rejectUrl,
-        '',
-        'Note: These are links that open the system page and confirm your action.'
-    ];
-
-    return 'mailto:' + SD_NOTIFICATION_EMAIL + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(lines.join('\n'));
-}
-
-function buildEmployeeRejectedMailto(requestLike) {
-    var fallbackEmail = 'employee@hrers.local';
-    var to = requestLike.requesterEmail || requestLike.email || fallbackEmail;
-    var id = requestLike.id || requestLike.sourceId || '';
-    var numericId = String(id).replace(/^PCR-/, '');
-    var subject = 'Position Change Request Update - PCR-' + numericId;
-    var lines = [
-        'Good day ' + (requestLike.employeeName || requestLike.name || 'Employee') + ',',
-        '',
-        'Your position change request has been evaluated by HR and is currently marked as rejected.',
-        '',
-        'Request ID: PCR-' + numericId,
-        'Requested Position: ' + (requestLike.requestedPosition || requestLike.requestedPos || '--'),
-        'Remarks: ' + (requestLike.reviewRemarks || requestLike.remarks || 'Please coordinate with HR for details.'),
-        '',
-        'Thank you.'
-    ];
-
-    return 'mailto:' + to + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(lines.join('\n'));
 }
 
 function getStatusFilterLabel(status) {
@@ -729,16 +677,8 @@ async function processApp(id, decision) {
         await refreshAppManagementData();
         renderCurrentTab();
 
-        if (app.sourceType === 'position') {
-            if (decision === 'Approved') {
-                window.location.href = buildSdReviewMailto(app);
-            } else if (decision === 'Rejected') {
-                window.location.href = buildEmployeeRejectedMailto(app);
-            }
-        }
-
         showToast(
-            decision === 'Approved' ? 'approved' : 'rejected',
+            decision === 'Approved' ? 'success' : 'info',
             decision === 'Approved' ? 'Application Approved' : 'Application Rejected',
             app.name + (decision === 'Approved' ? "'s request has been approved." : "'s request has been rejected.")
         );
@@ -890,16 +830,10 @@ document.addEventListener('DOMContentLoaded', function () {
             resetPositionForm();
             renderCurrentTab();
 
-            showToast('info', 'Request Saved',
-                'Position change request for ' + empName + ' has been logged successfully.');
-
-            if (window.confirm('Draft an email to SD for review now? Click Cancel if this request is rejected.')) {
-                window.location.href = buildSdReviewMailto(savedRequest);
-            } else if (window.confirm('Draft a rejection email to the employee now?')) {
-                window.location.href = buildEmployeeRejectedMailto(savedRequest);
-            }
+            showToast('success', 'Request Saved',
+                'Position change request for ' + empName + ' has been logged successfully and is now pending HR review.');
         } catch (error) {
-            showToast('info', 'Save Failed', 'Unable to save request right now.');
+            showToast('error', 'Save Failed', 'Unable to save request right now.');
         }
     });
 

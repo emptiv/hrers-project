@@ -1,7 +1,6 @@
 /* position_change_request.js */
 
 document.addEventListener('DOMContentLoaded', () => {
-    const HR_EMAIL = 'hr@hrers.local';
     const sidebar        = document.getElementById('sidebar');
     const logoToggle     = document.getElementById('logoToggle');
     const closeBtn       = document.getElementById('closeBtn');
@@ -129,6 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <table class="records-table" style="width:100%; border-collapse:collapse;">
                 <thead>
                     <tr style="text-align:left; border-bottom:1px solid #ddd;">
+                        <th>Request ID</th>
                         <th>Submitted</th>
                         <th>Requested Position</th>
                         <th>Effective Date</th>
@@ -139,10 +139,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 <tbody>`;
 
         items.forEach(item => {
+            const requestId = 'PCR-' + (item.id || '---');
             const submitted = item.submittedAt ? new Date(item.submittedAt).toLocaleDateString() : '';
             const eff = item.effectiveDate ? new Date(item.effectiveDate).toLocaleDateString() : '';
             const remarks = item.reviewRemarks || '';
             html += `<tr style="border-bottom:1px solid #f2f2f2;">
+                <td style="padding:8px; vertical-align:top; font-weight:600;">${escapeHtml(requestId)}</td>
                 <td style="padding:8px; vertical-align:top;">${submitted}</td>
                 <td style="padding:8px; vertical-align:top;">${escapeHtml(item.requestedPosition || '')}</td>
                 <td style="padding:8px; vertical-align:top;">${eff}</td>
@@ -170,7 +172,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ── Submit form ──
     if (positionForm) {
-        positionForm.addEventListener('submit', (event) => {
+        positionForm.addEventListener('submit', async (event) => {
             event.preventDefault();
 
             const empName = document.getElementById('empName').value.trim();
@@ -186,29 +188,37 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            const subject = `Position Change Request - ${empName}`;
-            const bodyLines = [
-                'Good day HR Team,',
-                '',
-                'I am requesting a position change.',
-                '',
-                `Employee Name: ${empName}`,
-                `Employee ID: ${empId || '--'}`,
-                `Current Position: ${currentPos || '--'}`,
-                `Department: ${currentDept || '--'}`,
-                `Requested Position: ${requestedPos}`,
-                `Effective Date: ${effectiveDate}`,
-                '',
-                'Reason:',
-                reason,
-                '',
-                'Thank you.'
-            ];
+            // Prepare form data for API submission
+            const formData = new FormData();
+            formData.append('employee_name', empName);
+            formData.append('employee_no', empId);
+            formData.append('current_position', currentPos);
+            formData.append('current_department', currentDept);
+            formData.append('requested_position', requestedPos);
+            formData.append('effective_date', effectiveDate);
+            formData.append('reason', reason);
 
-            showSuccessNotification('Opening your email client with a pre-filled request for HR.');
-            setTimeout(() => {
-                window.location.href = `mailto:${HR_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyLines.join('\n'))}`;
-            }, 250);
+            try {
+                const response = await fetch('/api/position-requests', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    showSuccessNotification('Request successfully submitted and is now awaiting HR and Department Head review.');
+                    resetForm();
+                    // After 2 seconds, redirect to records view
+                    setTimeout(() => {
+                        showRecordsView();
+                    }, 2000);
+                } else {
+                    const error = await response.json();
+                    showToast(error.detail || 'Failed to submit request. Please try again.');
+                }
+            } catch (error) {
+                showToast('An error occurred while submitting your request. Please try again.');
+            }
         });
     }
 
@@ -229,7 +239,7 @@ function showSuccessNotification(message) {
     toast.innerHTML = `
         <i class="fas fa-check-circle toast-icon"></i>
         <div class="toast-content">
-            <h4>Position Change Request Submitted</h4>
+            <h4>Request Submitted</h4>
             <p>${message}</p>
         </div>
         <button class="toast-close"><i class="fas fa-times"></i></button>
