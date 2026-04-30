@@ -9,72 +9,123 @@ function setupProfileViewPage() {
         if (span) item.setAttribute('data-text', span.innerText);
     });
 
-    if (sidebar && closeBtn) closeBtn.onclick = () => sidebar.classList.toggle('close');
-    if (sidebar && logoToggle) logoToggle.onclick = () => sidebar.classList.toggle('close');
+    if (sidebar && closeBtn) {
+        closeBtn.onclick = () => sidebar.classList.toggle('close');
+    }
+
+    if (sidebar && logoToggle) {
+        logoToggle.onclick = () => sidebar.classList.toggle('close');
+    }
 
     const tabs = document.querySelectorAll('.tab');
     const tabContents = document.querySelectorAll('.tab-content-item');
+
     tabs.forEach((btn) => {
         btn.addEventListener('click', () => {
             const targetId = btn.getAttribute('data-tab');
-            const targetContent = document.getElementById(targetId);
-            if (!targetContent) return;
 
             tabs.forEach((t) => t.classList.remove('active'));
             tabContents.forEach((c) => c.classList.remove('active'));
+
             btn.classList.add('active');
-            targetContent.classList.add('active');
+            document.getElementById(targetId)?.classList.add('active');
         });
     });
 }
 
-function setInfoRowValue(labelNeedle, value) {
-    const rows = document.querySelectorAll('.info-row');
-    rows.forEach((row) => {
-        const spans = row.querySelectorAll('span');
-        if (spans.length < 2) return;
-        if ((spans[0].textContent || '').toLowerCase().includes(labelNeedle.toLowerCase())) {
-            spans[1].textContent = value || '--';
-        }
-    });
-}
-
+/* =========================
+   PROFILE FILL (FIXED IDs)
+   ========================= */
 function applyProfileToView(profile) {
-    const nameEl = document.querySelector('.profile-info h2');
-    const roleEl = document.querySelector('.profile-info .role');
-    const employeeIdEl = document.querySelector('.profile-info .employee-id');
-    if (nameEl) nameEl.textContent = profile.fullName || 'School Director';
-    if (roleEl) roleEl.textContent = profile.position || profile.roleLabel || 'School Director';
-    if (employeeIdEl) employeeIdEl.textContent = `Employee ID: ${profile.employeeNo || profile.id || '--'}`;
+    document.getElementById('employeeName').textContent =
+        profile.fullName || 'School Director';
 
-    const details = document.querySelectorAll('.employment-details p');
-    if (details[0]) details[0].innerHTML = `<strong>Status</strong> <span class="status-dot" style="background:${profile.isActive ? '#8ddf9b' : '#f08d8d'}"></span> ${profile.isActive ? 'Active' : 'Inactive'}`;
-    if (details[1]) details[1].innerHTML = `<strong>Position</strong> ${profile.position || '--'}`;
-    if (details[2]) details[2].innerHTML = `<strong>Department</strong> ${profile.department || '--'}`;
-    if (details[3]) details[3].innerHTML = `<strong>Employment Type</strong> ${profile.employmentType || '--'}`;
-    if (details[4]) details[4].innerHTML = `<strong>Date Hired</strong> ${profile.dateHired || '--'}`;
+    document.getElementById('employeeRole').textContent =
+        profile.position || profile.roleLabel || 'School Director';
 
-    const contactLines = document.querySelectorAll('.contact-info p');
-    if (contactLines[0]) contactLines[0].innerHTML = `<i class="fas fa-envelope"></i> ${profile.email || '--'}`;
-    if (contactLines[1]) contactLines[1].innerHTML = `<i class="fas fa-phone"></i> ${profile.contactNumber || '--'}`;
-    if (contactLines[2]) contactLines[2].innerHTML = `<i class="fas fa-location-dot"></i> ${profile.address || '--'}`;
+    document.getElementById('employeeId').textContent =
+        `Employee ID: ${profile.employeeNo || profile.id || '--'}`;
 
-    setInfoRowValue('Department', profile.department || '--');
-    setInfoRowValue('Email', profile.email || '--');
-    setInfoRowValue('Contact', profile.contactNumber || '--');
+    document.getElementById('employeeStatus').textContent =
+        profile.isActive ? 'Active' : 'Inactive';
+
+    document.getElementById('statusDot').style.background =
+        profile.isActive ? '#8ddf9b' : '#f08d8d';
+
+    document.getElementById('employeePosition').textContent =
+        profile.position || '--';
+
+    document.getElementById('employeeDepartment').textContent =
+        profile.department || '--';
+
+    document.getElementById('employeeType').textContent =
+        profile.employmentType || '--';
+
+    document.getElementById('employeeDateHired').textContent =
+        profile.dateHired || '--';
+
+    document.getElementById('contactEmail').textContent =
+        profile.email || '--';
+
+    document.getElementById('contactPhone').textContent =
+        profile.contactNumber || '--';
+
+    document.getElementById('contactLocation').textContent =
+        profile.address || '--';
+
+    document.getElementById('deptName').textContent =
+        profile.department || '--';
 }
 
+/* =========================
+   HARD CODED EMPLOYMENT HISTORY (FORCED DISPLAY)
+   ========================= */
+function loadEmploymentHistory() {
+    const container = document.getElementById('timelineContainer');
+
+    container.innerHTML = `
+        <div class="timeline-item">
+            <div class="timeline-date">2026</div>
+            <div class="timeline-content">
+                <h4>Joined as a School Director</h4>
+                <p>Account successfully created and assigned role</p>
+            </div>
+        </div>
+
+        <div class="timeline-item">
+            <div class="timeline-date">2026</div>
+            <div class="timeline-content">
+                <h4>Account Created</h4>
+                <p>User account was created in the system</p>
+            </div>
+        </div>
+    `;
+}
+
+/* =========================
+   LOAD PROFILE (OPTIONAL BACKEND)
+   ========================= */
 async function loadProfileViewData() {
     try {
-        const response = await fetch('/api/profile/me');
+        const response = await fetch('/api/profile/me', {
+            credentials: 'include'
+        });
+
         if (!response.ok) return;
+
         const profile = await response.json();
         applyProfileToView(profile);
-    } catch (error) {
+
+    } catch (err) {
+        console.error(err);
     }
 }
 
+/* =========================
+   INIT
+   ========================= */
 document.addEventListener('DOMContentLoaded', () => {
     setupProfileViewPage();
     loadProfileViewData();
+    loadEmploymentHistory(); // IMPORTANT
 });

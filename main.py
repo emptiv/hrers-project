@@ -908,6 +908,92 @@ async def update_profile_me(
     db.refresh(current_user)
     return {"message": "Profile updated successfully.", "profile": build_profile_payload(current_user, db)}
 
+@app.get("/api/employment-history")
+def get_employment_history(
+    user_id: int | None = None,
+    all: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+
+    # =========================
+    # BASE QUERY (JOIN USER)
+    # =========================
+    query = (
+        db.query(EmploymentHistory, User)
+        .join(User, User.id == EmploymentHistory.user_id)
+    )
+
+    # =========================
+    # ROLE-BASED ACCESS
+    # =========================
+
+    # EMPLOYEE → only own history
+    if current_user.role == UserRole.employee:
+        query = query.filter(
+            EmploymentHistory.user_id == int(current_user.id)
+        )
+
+    # HR / ADMIN / HEAD ROLES
+    elif current_user.role in {
+    UserRole.department_head,
+    UserRole.hr_evaluator,
+    UserRole.hr_head,
+    UserRole.admin,
+    UserRole.school_director,
+}:
+
+        if user_id:
+            query = query.filter(
+                EmploymentHistory.user_id == int(user_id)
+            )
+
+        elif all:
+            pass  # return all
+
+        else:
+            query = query.filter(
+                EmploymentHistory.user_id == int(current_user.id)
+            )
+
+    # BLOCK OTHERS
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not allowed to access employment history",
+        )
+
+    # =========================
+    # EXECUTE QUERY
+    # =========================
+    rows = (
+        query.order_by(
+            EmploymentHistory.event_date.desc(),
+            EmploymentHistory.id.desc(),
+        )
+        .all()
+    )
+
+    # =========================
+    # FORMAT RESPONSE
+    # =========================
+    results = []
+
+    for history, user in rows:
+        results.append({
+            "id": history.id,
+            "user_id": history.user_id,
+            "employee_name": user.full_name if user else "Unknown",
+            "event_title": history.event_title,
+            "event_description": history.event_description,
+            "event_date": (
+                history.event_date.isoformat()
+                if history.event_date else None
+            ),
+            "role": user.role.value if user and hasattr(user.role, "value") else str(user.role) if user else None
+        })
+   
+    return {"items": results}
 
 @app.post("/api/profile/documents")
 async def upload_profile_document(

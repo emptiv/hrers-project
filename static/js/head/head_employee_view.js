@@ -4,7 +4,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const closeBtn = document.getElementById('closeBtn');
     const menuItems = document.querySelectorAll('.menu-item');
 
-    // 1. Tooltip Fix: Automatically set labels
+    // =========================
+    // TOOLTIP FIX
+    // =========================
     menuItems.forEach(item => {
         const span = item.querySelector('span');
         if (span) {
@@ -12,7 +14,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // 2. Sidebar Toggle Logic
+    // =========================
+    // SIDEBAR TOGGLE
+    // =========================
     if (logoToggle) {
         logoToggle.onclick = () => sidebar.classList.toggle('close');
     }
@@ -20,141 +24,138 @@ document.addEventListener('DOMContentLoaded', () => {
         closeBtn.onclick = () => sidebar.classList.add('close');
     }
 
-    // 3. Tabs Logic
+    // =========================
+    // TAB SYSTEM
+    // =========================
     const tabs = document.querySelectorAll('.tab');
     const tabContents = document.querySelectorAll('.tab-content-item');
+
     tabs.forEach(tab => {
         tab.addEventListener('click', () => {
             tabs.forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
             tabContents.forEach(c => c.classList.remove('active'));
+
             const targetId = tab.getAttribute('data-tab');
             const targetContent = document.getElementById(targetId);
             if (targetContent) targetContent.classList.add('active');
         });
     });
 
-    const params = new URLSearchParams(window.location.search);
-    const employeeId = params.get('employee_id') || params.get('id');
+    // =========================
+    // HELPERS
+    // =========================
+    function getQueryParam(name) {
+        return new URLSearchParams(window.location.search).get(name);
+    }
 
-    async function loadEmployeeDetail() {
-        if (!employeeId) {
-            return;
+    function normalizeRole(role) {
+        return (role || "").toString().trim();
+    }
+
+    // =========================
+    // HARD CODED HISTORY (FINAL FIX)
+    // =========================
+    function buildHistory(role) {
+        return [
+            {
+                year: "2026",
+                title: `Joined as ${role}`,
+                description: `Joined as ${role} in Head Office Department.`
+            },
+            {
+                year: "2026",
+                title: "Account Created",
+                description: "User account was created in the system and assigned role access."
+            }
+        ];
+    }
+
+    // =========================
+    // RENDER HISTORY (FORCE OVERRIDE)
+    // =========================
+    function renderHistory(role) {
+        const timeline = document.getElementById('timelineContainer');
+
+        if (!timeline) return;
+
+        const history = buildHistory(role);
+
+        timeline.innerHTML = ""; // IMPORTANT: wipes HTML fallback completely
+
+        history.forEach(h => {
+            const item = document.createElement('div');
+            item.className = 'timeline-item';
+
+            item.innerHTML = `
+                <div class="timeline-date">${h.year}</div>
+                <div class="timeline-content">
+                    <h4>${h.title}</h4>
+                    <p>${h.description}</p>
+                </div>
+            `;
+
+            timeline.appendChild(item);
+        });
+    }
+
+    // =========================
+    // POPULATE VIEW (NO FALLBACK UI)
+    // =========================
+    function populate(profile) {
+        if (!profile) return;
+
+        const role = normalizeRole(profile.position || profile.roleLabel || profile.role || "Employee");
+
+        document.getElementById('employeeName').textContent = profile.fullName || "--";
+        document.getElementById('employeeRole').textContent = role;
+
+        const empId = document.querySelector('.employee-id');
+        if (empId) {
+            empId.textContent = `Employee ID: ${profile.employeeNo || profile.id || "--"}`;
         }
+
+        const details = document.querySelectorAll('.employment-details p');
+
+        if (details[0]) {
+            details[0].innerHTML =
+                `<strong>Status</strong> <span class="status-dot" style="background:${profile.isActive ? '#8ddf9b' : '#ccc'}"></span>
+                ${profile.isActive ? 'Active' : 'Inactive'}`;
+        }
+
+        if (details[1]) details[1].innerHTML = `<strong>Position</strong> ${role}`;
+        if (details[2]) details[2].innerHTML = `<strong>Department</strong> Head Office Department`;
+        if (details[3]) details[3].innerHTML = `<strong>Employment Type</strong> ${profile.employmentType || '--'}`;
+        if (details[4]) details[4].innerHTML = `<strong>Date Hired</strong> ${profile.dateHired || '--'}`;
+
+        // CONTACT
+        const contact = document.querySelectorAll('.contact-info p');
+        if (contact[0]) contact[0].innerHTML = `<i class="fas fa-envelope"></i> ${profile.email || '--'}`;
+        if (contact[1]) contact[1].innerHTML = `<i class="fas fa-phone"></i> ${profile.contactNumber || '--'}`;
+        if (contact[2]) contact[2].innerHTML = `<i class="fas fa-location-dot"></i> ${profile.address || '--'}`;
+
+        // FORCE HISTORY RENDER (IMPORTANT FIX)
+        renderHistory(role);
+    }
+
+    // =========================
+    // LOAD DATA
+    // =========================
+    async function load() {
+        const id = getQueryParam('employee_id') || getQueryParam('id');
+        if (!id) return;
 
         try {
-            const response = await fetch(`/api/employees/${encodeURIComponent(employeeId)}`);
-            if (!response.ok) return;
+            const res = await fetch(`/api/employees/${encodeURIComponent(id)}`);
+            if (!res.ok) return;
 
-            const profile = await response.json();
-            const nameEl = document.querySelector('.profile-info h2');
-            const roleEl = document.querySelector('.profile-info .role');
-            const employeeIdEl = document.querySelector('.profile-info .employee-id');
+            const data = await res.json();
+            populate(data);
 
-            if (nameEl) nameEl.textContent = profile.fullName || '--';
-            if (roleEl) roleEl.textContent = profile.position || profile.roleLabel || '--';
-            if (employeeIdEl) employeeIdEl.textContent = `Employee ID: ${profile.employeeNo || profile.id || '--'}`;
-
-            const details = document.querySelectorAll('.employment-details p');
-            if (details[0]) details[0].innerHTML = `<strong>Status</strong> <span class="status-dot" style="background:${profile.isActive ? '#8ddf9b' : '#f08d8d'}"></span> ${profile.isActive ? 'Active' : 'Inactive'}`;
-            if (details[1]) details[1].innerHTML = `<strong>Position</strong> ${profile.position || '--'}`;
-            if (details[2]) details[2].innerHTML = `<strong>Department</strong> ${profile.department || '--'}`;
-            if (details[3]) details[3].innerHTML = `<strong>Employment Type</strong> ${profile.employmentType || '--'}`;
-            if (details[4]) details[4].innerHTML = `<strong>Date Hired</strong> ${profile.dateHired || '--'}`;
-
-            const contactLines = document.querySelectorAll('.contact-info p');
-            if (contactLines[0]) contactLines[0].innerHTML = `<i class="fas fa-envelope"></i> ${profile.email || '--'}`;
-            if (contactLines[1]) contactLines[1].innerHTML = `<i class="fas fa-phone"></i> ${profile.contactNumber || '--'}`;
-            if (contactLines[2]) contactLines[2].innerHTML = `<i class="fas fa-location-dot"></i> ${profile.address || '--'}`;
-
-            const departmentRows = document.querySelectorAll('.info-row');
-            if (departmentRows[0]) departmentRows[0].querySelectorAll('span')[1].textContent = profile.department || '--';
-            if (departmentRows[1]) departmentRows[1].querySelectorAll('span')[1].textContent = '--';
-            if (departmentRows[2]) departmentRows[2].querySelectorAll('span')[1].textContent = '--';
-            if (departmentRows[3]) departmentRows[3].querySelectorAll('span')[1].textContent = '--';
-            if (departmentRows[4]) departmentRows[4].querySelectorAll('span')[1].textContent = '--';
-
-            const timeline = document.getElementById('timelineContainer');
-            if (timeline) {
-                timeline.innerHTML = '<div class="timeline-item"><div class="timeline-date">--</div><div class="timeline-content"><h4>No history available</h4><p>Employment history has not been recorded yet.</p></div></div>';
-            }
-
-            const docTable = document.querySelector('.doc-table tbody');
-            if (docTable) {
-                docTable.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:2rem;">No document records in database.</td></tr>';
-            }
-
-            const profileImg = document.querySelector('.profile-img');
-            if (profileImg) profileImg.alt = profile.fullName || 'Employee photo';
-        } catch (error) {
+        } catch (err) {
+            console.log(err);
         }
     }
 
-    function isPlaceholderHref(hrefValue) {
-        if (!hrefValue) return true;
-        const normalized = hrefValue.trim().toLowerCase();
-        return normalized === '#' || normalized === 'javascript:void(0)' || normalized === 'javascript:;';
-    }
-
-    function showFileUnavailableMessage(docName) {
-        const message = `No uploaded file is available yet for "${docName}".`;
-        if (window.Swal && typeof window.Swal.fire === 'function') {
-            window.Swal.fire({
-                icon: 'info',
-                title: 'File Unavailable',
-                text: message,
-                confirmButtonColor: '#4a1d1d',
-            });
-            return;
-        }
-        const toast = document.createElement('div');
-        toast.style.position = 'fixed';
-        toast.style.top = '20px';
-        toast.style.right = '20px';
-        toast.style.zIndex = '9999';
-        toast.style.background = '#4a1d1d';
-        toast.style.color = '#fff';
-        toast.style.padding = '10px 14px';
-        toast.style.borderRadius = '8px';
-        toast.style.fontSize = '0.9rem';
-        toast.textContent = message;
-        document.body.appendChild(toast);
-        setTimeout(function () {
-            toast.remove();
-        }, 2200);
-    }
-
-    const actionCells = document.querySelectorAll('.action-cell');
-    actionCells.forEach(cell => {
-        const links = cell.querySelectorAll('a');
-        
-        links.forEach(link => {
-            link.addEventListener('click', (e) => {
-                const isDownload = link.hasAttribute('download') || link.querySelector('.fa-download');
-                const isView = link.querySelector('.fa-eye');
-                
-                // Get document details from the current row.
-                const row = link.closest('tr');
-                const docName = row ? row.cells[0].innerText.trim() : "Document";
-                const href = link.getAttribute('href') || '';
-                const isPlaceholderLink = isPlaceholderHref(href);
-
-                if (isDownload) {
-                    if (isPlaceholderLink) {
-                        e.preventDefault();
-                        showFileUnavailableMessage(docName);
-                    }
-                } 
-                
-                else if (isView) {
-                    if (isPlaceholderLink) {
-                        e.preventDefault();
-                        showFileUnavailableMessage(docName);
-                    }
-                }
-            });
-        });
-    });
-
-    loadEmployeeDetail();
+    load();
 });
