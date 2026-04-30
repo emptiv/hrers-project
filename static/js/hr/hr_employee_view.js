@@ -44,9 +44,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const response = await fetch(`/api/users/${encodeURIComponent(employeeId)}`);
-            if (!response.ok) return;
+if (!response.ok) return;
 
-            const profile = await response.json();
+const profile = await response.json();
+
+// 🔥 ADD THIS BLOCK HERE
+try {
+    const historyResponse = await fetch(
+        `/api/employment-history?user_id=${encodeURIComponent(employeeId)}`
+    );
+
+    if (historyResponse.ok) {
+        const historyData = await historyResponse.json();
+        profile.history = historyData.items || [];
+    } else {
+        profile.history = [];
+    }
+} catch (err) {
+    profile.history = [];
+}
+
             const nameEl = document.querySelector('.profile-info h2');
             const roleEl = document.querySelector('.profile-info .role');
             const employeeIdEl = document.querySelector('.profile-info .employee-id');
@@ -78,14 +95,23 @@ document.addEventListener('DOMContentLoaded', () => {
             if (timeline) {
                 const history = Array.isArray(profile.history) ? profile.history : [];
                 timeline.innerHTML = history.length ? history.map((item) => `
-                    <div class="timeline-item">
-                        <div class="timeline-date">${item.date || '--'}</div>
-                        <div class="timeline-content">
-                            <h4>${item.title || 'History Event'}</h4>
-                            <p>${item.description || '--'}</p>
-                        </div>
-                    </div>
-                `).join('') : '<div class="timeline-item"><div class="timeline-date">--</div><div class="timeline-content"><h4>No history available</h4><p>Employment history has not been recorded yet.</p></div></div>';
+    <div class="timeline-item">
+        <div class="timeline-date">${item.event_date || '--'}</div>
+        <div class="timeline-content">
+            <h4>${item.event_title || 'History Event'}</h4>
+            <p>${item.event_description || '--'}</p>
+        </div>
+    </div>
+`).join('') : `
+    <div class="timeline-item">
+        <div class="timeline-date">--</div>
+        <div class="timeline-content">
+            <h4>No history available</h4>
+            <p>Employment history has not been recorded yet.</p>
+        </div>
+    </div>
+`;
+
             }
 
             const docTable = document.querySelector('.doc-table tbody');
