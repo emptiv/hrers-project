@@ -252,8 +252,10 @@ function renderDocuments(documents) {
 
     tbody.innerHTML = documents.map((doc) => {
         const statusClass = getStatusClass(doc.status);
-        const viewBtn = doc.url ? `<a href="${doc.url}" target="_blank" title="View"><i class="fas fa-eye action-icon"></i></a>` : '';
-        const downloadBtn = doc.url ? `<a href="${doc.url}" download title="Download"><i class="fas fa-download action-icon"></i></a>` : '';
+        const viewUrl = doc.url ? `${doc.url}?mode=inline` : '';
+        const downloadUrl = doc.url ? `${doc.url}?mode=attachment` : '';
+        const viewBtn = viewUrl ? `<a href="${viewUrl}" target="_blank" title="View"><i class="fas fa-eye action-icon"></i></a>` : '';
+        const downloadBtn = downloadUrl ? `<a href="${downloadUrl}" download title="Download"><i class="fas fa-download action-icon"></i></a>` : '';
         const deleteBtn = `<i class="fas fa-trash-alt action-icon delete" onclick="openDeleteModal(${doc.id}, '${doc.name}')" title="Delete" style="cursor: pointer;"></i>`;
         const reviewBtn = shouldShowReviewOption(doc) ? `<i class="fas fa-edit action-icon" onclick="openReviewModal(${doc.id})" title="Review" style="cursor: pointer;"></i>` : '';
 

@@ -1058,9 +1058,26 @@ async def review_profile_document(
     return {"message": "Document updated successfully.", "document": profile_document_to_payload(document)}
 
 
+def get_media_type(file_ext: str) -> str:
+    """Determine media type based on file extension"""
+    media_types = {
+        "pdf": "application/pdf",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png",
+        "gif": "image/gif",
+        "webp": "image/webp",
+        "doc": "application/msword",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "txt": "text/plain",
+    }
+    return media_types.get(file_ext.lower(), "application/octet-stream")
+
+
 @app.get("/api/profile/documents/{document_id}/download")
 async def download_profile_document(
     document_id: int,
+    mode: str = "attachment",  # 'attachment' for download, 'inline' for view
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1088,10 +1105,19 @@ async def download_profile_document(
     else:
         filename = safe_filename
 
+    # Determine media type based on file extension
+    media_type = get_media_type(file_ext)
+    
+    # Determine Content-Disposition based on mode parameter
+    if mode.lower() == "inline":
+        disposition = f"inline; filename={filename}"
+    else:
+        disposition = f"attachment; filename={filename}"
+
     return StreamingResponse(
         iter([document.file_content]),
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        media_type=media_type,
+        headers={"Content-Disposition": disposition},
     )
 
 
