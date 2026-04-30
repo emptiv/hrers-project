@@ -7,6 +7,7 @@ from io import StringIO
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from decimal import Decimal, InvalidOperation
+from sqlalchemy.exc import SQLAlchemyError
 
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -650,7 +651,14 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup() -> None:
-    Base.metadata.create_all(bind=engine)
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql("SELECT 1")
+        Base.metadata.create_all(bind=engine)
+    except SQLAlchemyError as exc:
+        raise RuntimeError(
+            "Unable to connect to the database. Check DATABASE_URL, ensure MySQL is running, and create the hrers_project database before starting the app."
+        ) from exc
 
 
 @app.get("/health")
@@ -665,17 +673,17 @@ def root() -> RedirectResponse:
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
-    return templates.TemplateResponse("login/login.html", {"request": request})
+    return templates.TemplateResponse(request, "login/login.html", {})
 
 
 @app.get("/forgot-password", response_class=HTMLResponse)
 def forgot_password_page(request: Request):
-    return templates.TemplateResponse("login/forpass.html", {"request": request})
+    return templates.TemplateResponse(request, "login/forpass.html", {})
 
 
 @app.get("/change-password", response_class=HTMLResponse)
 def change_password_page(request: Request):
-    return templates.TemplateResponse("login/changepass.html", {"request": request})
+    return templates.TemplateResponse(request, "login/changepass.html", {})
 
 
 @app.get("/dashboard/admin", response_class=HTMLResponse)
