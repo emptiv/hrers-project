@@ -1095,6 +1095,70 @@ async def download_profile_document(
     )
 
 
+@app.get("/api/profile/documents")
+async def get_profile_documents(
+    user_id: int | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retrieve all documents for the current user or a specific user (if authorized)"""
+    # If user_id is provided, check authorization
+    if user_id:
+        # Only HR, Admin, School Director, and Department Head can view other users' documents
+        is_authorized = current_user.role in (
+            UserRole.admin,
+            UserRole.school_director,
+            UserRole.hr_evaluator,
+            UserRole.hr_head,
+            UserRole.department_head,
+        )
+        
+        if not is_authorized and int(current_user.id) != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to view these documents"
+            )
+        
+        target_user_id = user_id
+    else:
+        # Default to current user's documents
+        target_user_id = int(current_user.id)
+    
+    documents = db.query(ProfileDocument).filter(ProfileDocument.user_id == target_user_id).all()
+    return {
+        "documents": [profile_document_to_payload(doc) for doc in documents],
+        "count": len(documents),
+    }
+
+
+@app.delete("/api/profile/documents/{document_id}")
+async def delete_profile_document(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    document = db.query(ProfileDocument).filter(ProfileDocument.id == document_id).first()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    # Allow deletion by document owner or authorized reviewers (HR/Head/Admin/SD)
+    is_owner = document.user_id == int(current_user.id)
+    is_authorized = current_user.role in (
+        UserRole.admin,
+        UserRole.school_director,
+        UserRole.hr_evaluator,
+        UserRole.hr_head,
+    )
+
+    if not (is_owner or is_authorized):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to delete this document")
+
+    db.delete(document)
+    db.commit()
+
+    return {"message": "Document deleted successfully."}
+
+
 @app.get("/roles")
 def list_roles() -> list[str]:
     return [role.value for role in UserRole]

@@ -6,6 +6,7 @@
     <title>Employee Profile | HR</title>
     <link rel="shortcut icon" href="../../static/img/general/uph.png">
     <link rel="stylesheet" href="../../static/css/hr/hr_employee_view.css">
+    <link rel="stylesheet" href="../../static/css/document-management.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
 </head>
 
@@ -95,7 +96,16 @@
                 </div>
 
                 <div class="tab-content-item" id="docs">
-                    <div class="doc-header"><span>Loading document records...</span></div>
+                    <div class="doc-header">
+                        <span style="display: flex; align-items: center; gap: 8px;">
+                            <i class="fas fa-file-alt" style="color: #666;"></i>
+                            Loading document records...
+                        </span>
+                        <button id="uploadDocBtn" class="btn-primary" style="padding: 10px 16px; font-size: 13px; white-space: nowrap;">
+                            <i class="fas fa-cloud-upload-alt"></i> Upload Document
+                        </button>
+                    </div>
+                    <div id="documentAlertBanner" style="display: none; margin: 12px 0; padding: 12px; border-radius: 8px; background: #fff7e6; color: #8a5a00; border: 1px solid #ffd28a;"></div>
                     <table class="doc-table">
                         <thead>
                             <tr>
@@ -153,6 +163,91 @@
     </div>
 </div>
 
+<!-- DOCUMENT UPLOAD MODAL -->
+<div id="uploadDocumentModal" class="modal" style="display:none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Upload Document</h3>
+            <span class="close-modal" id="closeUploadModal">&times;</span>
+        </div>
+        <form id="uploadDocumentForm" class="modal-body">
+            <div class="form-group">
+                <label>Select File <span style="color:#dc3545;">*</span></label>
+                <input type="file" name="document_file" required>
+                <small style="color:#666;">Max size: 10MB | Allowed: PDF, DOCX, DOC, JPG, PNG</small>
+            </div>
+            <div class="form-group">
+                <label>Document Name</label>
+                <input type="text" name="document_name" placeholder="e.g., Resume, Certification">
+            </div>
+            <div class="form-group">
+                <label>Document Type</label>
+                <select name="document_type">
+                    <option value="Resume">Resume</option>
+                    <option value="Certificate">Certificate</option>
+                    <option value="License">License</option>
+                    <option value="Certification">Certification</option>
+                    <option value="Training">Training</option>
+                    <option value="Other">Other</option>
+                </select>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn-primary">Upload</button>
+                <button type="button" class="btn-secondary" id="cancelUploadBtn">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- DOCUMENT DELETE MODAL -->
+<div id="deleteDocumentModal" class="modal" style="display:none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Delete Document</h3>
+            <span class="close-modal" id="closeDeleteModal">&times;</span>
+        </div>
+        <div class="modal-body">
+            <p>Are you sure you want to delete the document: <strong id="deleteDocName"></strong>?</p>
+            <p style="color:#666; font-size:13px;">This action cannot be undone.</p>
+            <div class="form-actions">
+                <button id="confirmDeleteBtn" class="btn-danger">Delete</button>
+                <button type="button" class="btn-secondary" id="cancelDeleteBtn">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- DOCUMENT REVIEW MODAL (for HR to update status) -->
+<div id="reviewDocumentModal" class="modal" style="display:none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Review Document</h3>
+            <span class="close-modal" id="closeReviewModal">&times;</span>
+        </div>
+        <form id="reviewDocumentForm" class="modal-body">
+            <div class="form-group">
+                <label>Status</label>
+                <select name="status">
+                    <option value="Submitted">Submitted</option>
+                    <option value="Pending">Pending</option>
+                    <option value="Approved">Approved</option>
+                    <option value="Needs Update">Needs Update</option>
+                    <option value="Rejected">Rejected</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Review Notes</label>
+                <textarea name="review_notes" rows="4" placeholder="Add your review notes..."></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn-primary">Save Review</button>
+                <button type="button" class="btn-secondary" id="cancelReviewBtn">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script src="../../static/js/hr/hr_employee_view.js"></script>
+<script src="../../static/js/document-management.js"></script>
 </body>
 </html>
