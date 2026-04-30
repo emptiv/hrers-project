@@ -206,7 +206,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 if (response.ok) {
                     const result = await response.json();
-                    showSuccessNotification('Request successfully submitted and is now awaiting HR and Department Head review.');
+                    showSuccessNotification('Request successfully submitted and is now awaiting HR review.');
                     resetForm();
                     // After 2 seconds, redirect to records view
                     setTimeout(() => {

@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
-from auth import authenticate_user, create_access_token, get_current_user, hash_password, require_roles
+from auth import authenticate_user, create_access_token, get_current_user, get_current_user_optional, hash_password, require_roles
 from database import Base, engine, get_db
 from models import (
     AuditLog,
@@ -724,11 +724,11 @@ def employee_dashboard_page(
 
 
 @app.get("/templates/{section}/{page_name}", response_class=HTMLResponse)
-def protected_template_page(
+def public_template_page(
     section: str,
     page_name: str,
     request: Request,
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_current_user_optional),
 ):
     normalized_name = page_name if page_name.endswith(".html") else f"{page_name}.html"
 
@@ -744,7 +744,13 @@ def protected_template_page(
     if not candidate_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Page not found")
 
-    ensure_role_access(candidate_section, current_user.role)
+    # Public sections (like "application") don't require authentication
+    if candidate_section not in PUBLIC_SECTIONS:
+        # Protected sections require authentication and role validation
+        if current_user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+        ensure_role_access(candidate_section, current_user.role)
+    
     return render_role_page(request, candidate_section, normalized_name)
 
 
@@ -752,7 +758,7 @@ def protected_template_page(
 def protected_flat_template_page(
     page_name: str,
     request: Request,
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_current_user_optional),
 ):
     normalized_name = page_name if page_name.endswith(".html") else f"{page_name}.html"
     prefixed_section = resolve_prefixed_section(normalized_name)
@@ -763,7 +769,13 @@ def protected_flat_template_page(
     if not candidate_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Page not found")
 
-    ensure_role_access(prefixed_section, current_user.role)
+    # Public sections (like "application") don't require authentication
+    if prefixed_section not in PUBLIC_SECTIONS:
+        # Protected sections require authentication and role validation
+        if current_user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+        ensure_role_access(prefixed_section, current_user.role)
+    
     return render_role_page(request, prefixed_section, normalized_name)
 
 
