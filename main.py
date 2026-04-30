@@ -460,10 +460,11 @@ def can_review_position_request(current_user: User, position_request: PositionCh
     if current_user.id == position_request.requester_user_id:
         return False
 
+    # Only HR roles can review and approve position change requests
+    # School Director is read-only for position change requests
     return current_user.role in {
         UserRole.hr_evaluator,
         UserRole.hr_head,
-        UserRole.school_director,
     }
 
 

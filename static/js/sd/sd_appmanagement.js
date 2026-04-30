@@ -764,9 +764,10 @@ function openModal(id) {
     renderStatusHistory(app);
     updateModalDocPage();
 
-    // Only show Approve/Reject if it's SD's stage
-    document.getElementById('modalActions').style.display =
-        (!isFinalStatus(app.status) && canActOnApp(app.status)) ? 'flex' : 'none';
+    // Only show Approve/Reject if it's SD's stage AND it's NOT a position change request
+    // Position change requests are HR-only, so SD cannot approve/reject them
+    const canShowActions = !isFinalStatus(app.status) && canActOnApp(app.status) && !isPositionChangeRecord(app);
+    document.getElementById('modalActions').style.display = canShowActions ? 'flex' : 'none';
 
     document.getElementById('viewModal').style.display = 'flex';
 }
@@ -779,6 +780,13 @@ function closeViewModal() {
 async function processApp(id, decision) {
     const app = findRecordById(id);
     if (!app) return;
+
+    // Guard: prevent SD from approving position change requests
+    if (isPositionChangeRecord(app)) {
+        showToast('info', 'Action Not Allowed',
+            'Position change requests can only be approved by HR. School Director has view-only access.');
+        return;
+    }
 
     // Guard: only allow action if it's SD's stage
     if (!canActOnApp(app.status)) {
