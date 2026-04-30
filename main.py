@@ -464,7 +464,6 @@ def can_review_position_request(current_user: User, position_request: PositionCh
         UserRole.hr_evaluator,
         UserRole.hr_head,
         UserRole.school_director,
-        UserRole.department_head,
     }
 
 
@@ -1893,8 +1892,12 @@ def list_position_requests(
 ):
     query = db.query(PositionChangeRequest)
 
+    # Role-based filtering: employees see only their own, HR/SD see all
     if current_user.role == UserRole.employee:
         query = query.filter(PositionChangeRequest.requester_user_id == int(current_user.id))
+    elif current_user.role == UserRole.department_head:
+        # Department Head cannot access position change requests
+        return {"items": []}
 
     if employee:
         query = query.filter(PositionChangeRequest.employee_name.ilike(employee))
@@ -2322,18 +2325,34 @@ def dashboard_notifications(
             }
         )
 
-    recent_positions = position_query.order_by(PositionChangeRequest.updated_at.desc()).limit(2).all()
-    for item in recent_positions:
-        status_value = str(item.status.value or "Pending")
-        notif_type = "success" if status_value == "Approved" else ("warning" if status_value == "Rejected" else "info")
-        notifications.append(
-            {
-                "type": notif_type,
-                "message": f"Position request {status_value.lower()} ({item.requested_position})",
-                "time": format_relative_time(item.updated_at or item.created_at),
-                "_sort": item.updated_at or item.created_at,
-            }
-        )
+    # Position change notifications: show to employees (own), HR evaluator, HR Head, and School Director
+    # Department Head should NOT receive position change notifications
+    if current_user.role in {UserRole.hr_evaluator, UserRole.hr_head, UserRole.school_director}:
+        recent_positions = position_query.order_by(PositionChangeRequest.updated_at.desc()).limit(2).all()
+        for item in recent_positions:
+            status_value = str(item.status.value or "Pending")
+            notif_type = "success" if status_value == "Approved" else ("warning" if status_value == "Rejected" else "info")
+            notifications.append(
+                {
+                    "type": notif_type,
+                    "message": f"Position request {status_value.lower()} ({item.requested_position})",
+                    "time": format_relative_time(item.updated_at or item.created_at),
+                    "_sort": item.updated_at or item.created_at,
+                }
+            )
+    elif current_user.role == UserRole.employee:
+        recent_positions = position_query.order_by(PositionChangeRequest.updated_at.desc()).limit(2).all()
+        for item in recent_positions:
+            status_value = str(item.status.value or "Pending")
+            notif_type = "success" if status_value == "Approved" else ("warning" if status_value == "Rejected" else "info")
+            notifications.append(
+                {
+                    "type": notif_type,
+                    "message": f"Position request {status_value.lower()} ({item.requested_position})",
+                    "time": format_relative_time(item.updated_at or item.created_at),
+                    "_sort": item.updated_at or item.created_at,
+                }
+            )
 
     if current_user.role in {UserRole.hr_evaluator, UserRole.hr_head, UserRole.school_director, UserRole.department_head, UserRole.admin}:
         recent_trainings = training_query.order_by(TrainingSession.updated_at.desc()).limit(1).all()
