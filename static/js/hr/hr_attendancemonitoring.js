@@ -51,11 +51,22 @@
 
         const table = document.querySelector('.attendance-table');
         const tbody = table ? table.querySelector('tbody') : null;
+        const employeeModal = document.getElementById('employeeModal');
+        const modalCloseBtn = employeeModal ? employeeModal.querySelector('.close-modal') : null;
+        const modalTableBody = document.getElementById('modalTableBody');
+        const modalEmployeeName = document.getElementById('modalEmployeeName');
+        const modalEmployeeId = document.getElementById('detID');
+        const modalPosition = document.getElementById('detPos');
+        const modalDepartment = document.getElementById('detDept');
+        const dateRangeText = document.getElementById('dateRangeText');
+        const totalHoursValue = document.getElementById('totalHoursValue');
+        const periodText = document.getElementById('periodText');
 
         let weekOffset = 0;
         let weekStartDate = new Date();
         let monitoringRows = [];
         let employeeDirectory = [];
+        let activeEmployeeId = null;
         const filterState = { dept: 'All', status: 'All', date: null };
 
         const filterPopover = document.createElement('div');
@@ -231,6 +242,97 @@
             setStatValue(4, late);
         }
 
+        function formatModalTime(value) {
+            if (!value || value === '--') return '--';
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) return '--';
+            return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        }
+
+        function setModalOpen(isOpen) {
+            if (!employeeModal) return;
+            employeeModal.style.display = isOpen ? 'block' : 'none';
+        }
+
+        function closeEmployeeModal() {
+            activeEmployeeId = null;
+            setModalOpen(false);
+        }
+
+        function renderModalRows(items) {
+            if (!modalTableBody) return;
+            modalTableBody.innerHTML = '';
+
+            if (!items || !items.length) {
+                modalTableBody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:1rem;">No attendance history found.</td></tr>';
+                if (totalHoursValue) totalHoursValue.textContent = '0h 00m';
+                return;
+            }
+
+            let totalSeconds = 0;
+
+            items.forEach(function (item) {
+                const row = document.createElement('tr');
+                const workedHours = String(item.total_hours || '0h 00m');
+                const hoursMatch = workedHours.match(/^(\d+)h\s+(\d{2})m$/i);
+                if (hoursMatch) {
+                    totalSeconds += (parseInt(hoursMatch[1], 10) * 3600) + (parseInt(hoursMatch[2], 10) * 60);
+                }
+
+                row.innerHTML = `
+                    <td>${item.date || '--'}</td>
+                    <td>${item.day || '--'}</td>
+                    <td>${formatModalTime(item.time_in)}</td>
+                    <td>${formatModalTime(item.time_out)}</td>
+                    <td>${workedHours}</td>
+                    <td>${item.status || '--'}</td>
+                `;
+                modalTableBody.appendChild(row);
+            });
+
+            if (totalHoursValue) {
+                const totalHours = Math.floor(totalSeconds / 3600);
+                const totalMinutes = Math.floor((totalSeconds % 3600) / 60);
+                totalHoursValue.textContent = totalHours + 'h ' + String(totalMinutes).padStart(2, '0') + 'm';
+            }
+        }
+
+        async function loadEmployeeHistory(employeeRow) {
+            if (!employeeRow) return;
+            const employeeId = employeeRow.userId || employeeRow.employeeId || employeeRow.id;
+            if (employeeId == null) return;
+
+            activeEmployeeId = employeeId;
+
+            if (modalTableBody) {
+                modalTableBody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:1rem;">Loading attendance history...</td></tr>';
+            }
+            if (modalEmployeeName) modalEmployeeName.textContent = employeeRow.name || '--';
+            if (modalEmployeeId) modalEmployeeId.textContent = employeeRow.employeeId || employeeRow.employeeNo || employeeRow.userId || '--';
+            if (modalPosition) modalPosition.textContent = employeeRow.title || 'Employee';
+            if (modalDepartment) modalDepartment.textContent = employeeRow.department || 'General';
+            if (dateRangeText) dateRangeText.textContent = 'Attendance Log';
+            if (periodText) periodText.textContent = 'Log';
+            if (totalHoursValue) totalHoursValue.textContent = '0h 00m';
+
+            setModalOpen(true);
+
+            try {
+                const response = await fetch('/api/attendance/history/' + encodeURIComponent(employeeId));
+                if (!response.ok) {
+                    renderModalRows([]);
+                    return;
+                }
+
+                const payload = await response.json();
+                if (activeEmployeeId !== employeeId) return;
+                renderModalRows(payload.items || []);
+            } catch (error) {
+                if (activeEmployeeId !== employeeId) return;
+                renderModalRows([]);
+            }
+        }
+
         function applyFilters() {
             if (!tbody) return;
             const rows = Array.from(tbody.querySelectorAll('tr'));
@@ -251,6 +353,7 @@
                 tr.dataset.name = item.name || '';
                 tr.dataset.title = item.title || '';
                 tr.dataset.dayStatuses = (item.days || []).map(function (d) { return d.status || 'none'; }).join(',');
+                tr.style.cursor = 'pointer';
 
                 const employeeCell = document.createElement('td');
                 employeeCell.innerHTML = `
@@ -264,6 +367,10 @@
                 </div>
             `;
                 tr.appendChild(employeeCell);
+
+                tr.addEventListener('click', function () {
+                    loadEmployeeHistory(item);
+                });
 
                 (item.days || []).forEach(function (day) {
                     const td = document.createElement('td');
@@ -418,6 +525,24 @@
                 loadWeekData();
             });
         }
+
+        if (modalCloseBtn) {
+            modalCloseBtn.addEventListener('click', closeEmployeeModal);
+        }
+
+        if (employeeModal) {
+            employeeModal.addEventListener('click', function (e) {
+                if (e.target === employeeModal) {
+                    closeEmployeeModal();
+                }
+            });
+        }
+
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') {
+                closeEmployeeModal();
+            }
+        });
 
         setDateButtonLabel();
         Promise.all([

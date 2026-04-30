@@ -3236,5 +3236,58 @@ def monitoring_attendance_page(
     request: Request,
     current_user: User = Depends(require_roles(UserRole.hr_evaluator, UserRole.hr_head, UserRole.department_head)),
 ):
-    """Render the Attendance Monitoring dashboard for Heads and HR."""
     return render_role_page(request, "hr", "hr_attendancemonitoring.html")
+
+@app.get("/attendance/log")
+def attendance_log_page(
+    request: Request,
+    current_user: User = Depends(require_roles(UserRole.hr_evaluator, UserRole.hr_head, UserRole.department_head)),
+):
+    return render_role_page(request, "hr", "hr_attendance.html")
+
+
+@app.get("/api/attendance/history/{employee_id}")
+def get_employee_attendance_history(
+    employee_id: int,
+    current_user: User = Depends(require_roles(UserRole.hr_evaluator, UserRole.hr_head, UserRole.department_head)),
+    db: Session = Depends(get_db),
+):
+    employee = db.query(User).filter(User.id == employee_id, User.role == UserRole.employee).first()
+    if not employee:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+
+    accessible_employee_ids = set(get_accessible_employee_ids(current_user, db))
+    if int(employee.id) not in accessible_employee_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to view this employee's attendance")
+
+    records = (
+        db.query(AttendanceRecord)
+        .filter(AttendanceRecord.user_id == int(employee.id))
+        .order_by(AttendanceRecord.record_date.desc(), AttendanceRecord.id.desc())
+        .all()
+    )
+
+    def format_time(value: datetime | None) -> str:
+        if not value:
+            return "--"
+        return value.strftime("%I:%M %p").lstrip("0")
+
+    return {
+        "employeeId": int(employee.id),
+        "items": [
+            {
+                "date": record.record_date.isoformat(),
+                "day": record.record_date.strftime("%A"),
+                "time_in": format_time(record.time_in),
+                "time_out": format_time(record.time_out),
+                "total_hours": f"{int(record.worked_seconds or 0) // 3600}h {(int(record.worked_seconds or 0) % 3600) // 60:02d}m",
+                "status": str(record.status.value).title(),
+            }
+            for record in records
+        ],
+    }
+
+@app.get("/api/employees/list")
+async def get_employee_list():
+    # Placeholder to fix that 422 error until you connect your real DB logic
+    return []
