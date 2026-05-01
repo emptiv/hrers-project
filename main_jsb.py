@@ -460,6 +460,8 @@ def can_review_leave(current_user: User, leave_request: LeaveRequest) -> bool:
         return role == UserRole.department_head
     if approval_stage == LeaveApprovalStage.hr.value:
         return role in {UserRole.hr_evaluator, UserRole.hr_head}
+    if approval_stage == LeaveApprovalStage.school_director.value:
+        return role == UserRole.school_director
     return False
 
 
@@ -472,9 +474,17 @@ def leave_display_status(item: LeaveRequest) -> str:
     approval_stage = str(item.approval_stage or LeaveApprovalStage.department_head.value)
     if approval_stage == LeaveApprovalStage.hr.value:
         return "Pending HR Review"
+    if approval_stage == LeaveApprovalStage.school_director.value:
+        return "Pending School Director Review"
     if approval_stage == LeaveApprovalStage.completed.value:
         return "Pending Review"
     return "Pending Dept Head Review"
+
+
+def initial_leave_approval_stage(current_user: User) -> tuple[str, str]:
+    if current_user.role == UserRole.department_head:
+        return LeaveApprovalStage.hr.value, "Awaiting HR review."
+    return LeaveApprovalStage.department_head.value, "Awaiting Department Head review."
 
 
 def can_review_position_request(current_user: User, position_request: PositionChangeRequest) -> bool:
@@ -1154,6 +1164,8 @@ async def create_leave_request(
 
     num_days = (end_date_val - start_date_val).days + 1
 
+    approval_stage, review_remarks = initial_leave_approval_stage(current_user)
+
     leave_request = LeaveRequest(
         requester_user_id=int(current_user.id),
         requester_name=str(current_user.full_name),
@@ -1163,12 +1175,12 @@ async def create_leave_request(
         end_date=end_date_val,
         num_days=num_days,
         status=LeaveStatus.pending,
-        approval_stage=LeaveApprovalStage.department_head.value,
+        approval_stage=approval_stage,
         reason=reason,
         file_name=file_name,
         reviewed_by_user_id=None,
         reviewed_by_name=None,
-        review_remarks="Awaiting Department Head review.",
+        review_remarks=review_remarks,
     )
     db.add(leave_request)
     db.commit()
@@ -1202,9 +1214,16 @@ def list_leave_requests(
     if mode.lower() == "active":
         query = query.filter(LeaveRequest.status == LeaveStatus.pending)
         if role == UserRole.department_head:
-            query = query.filter(LeaveRequest.approval_stage == LeaveApprovalStage.department_head.value)
+            query = query.filter(
+                or_(
+                    LeaveRequest.approval_stage == LeaveApprovalStage.department_head.value,
+                    LeaveRequest.requester_user_id == int(current_user.id),
+                )
+            )
         elif role in {UserRole.hr_evaluator, UserRole.hr_head}:
             query = query.filter(LeaveRequest.approval_stage == LeaveApprovalStage.hr.value)
+        elif role == UserRole.school_director:
+            query = query.filter(LeaveRequest.approval_stage == LeaveApprovalStage.school_director.value)
     elif mode.lower() == "history":
         query = query.filter(LeaveRequest.status.in_([LeaveStatus.approved, LeaveStatus.rejected]))
 
@@ -1284,22 +1303,47 @@ async def decide_leave_request(
 
         item.reviewed_by_user_id = int(current_user.id)
         item.reviewed_by_name = str(current_user.full_name)
+        if str(item.requester_role) == UserRole.department_head.value:
+            if decision_raw == "approved":
+                item.approval_stage = LeaveApprovalStage.school_director.value
+                item.review_remarks = remarks or (
+                    f"Approved by HR {current_user.full_name} on {today_text}. Awaiting School Director review."
+                )
+                message = "Request forwarded to School Director."
+            else:
+                item.status = LeaveStatus.rejected
+                item.approval_stage = LeaveApprovalStage.completed.value
+                item.review_remarks = remarks or f"Rejected by HR {current_user.full_name} on {today_text}."
+                message = "Request rejected."
+        else:
+            if decision_raw == "approved":
+                item.status = LeaveStatus.approved
+                item.approval_stage = LeaveApprovalStage.completed.value
+                item.review_remarks = remarks or f"Approved by HR {current_user.full_name} on {today_text}."
+                message = "Request approved."
+            else:
+                item.status = LeaveStatus.rejected
+                item.approval_stage = LeaveApprovalStage.completed.value
+                item.review_remarks = remarks or f"Rejected by HR {current_user.full_name} on {today_text}."
+                message = "Request rejected."
+    elif approval_stage == LeaveApprovalStage.school_director.value:
+        if current_user.role != UserRole.school_director:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to review this request")
+
+        item.reviewed_by_user_id = int(current_user.id)
+        item.reviewed_by_name = str(current_user.full_name)
         if decision_raw == "approved":
             item.status = LeaveStatus.approved
             item.approval_stage = LeaveApprovalStage.completed.value
-            item.review_remarks = remarks or f"Approved by HR {current_user.full_name} on {today_text}."
+            item.review_remarks = remarks or f"Approved by School Director {current_user.full_name} on {today_text}."
             message = "Request approved."
         else:
             item.status = LeaveStatus.rejected
             item.approval_stage = LeaveApprovalStage.completed.value
-            item.review_remarks = remarks or f"Rejected by HR {current_user.full_name} on {today_text}."
+            item.review_remarks = remarks or f"Rejected by School Director {current_user.full_name} on {today_text}."
             message = "Request rejected."
     else:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to review this request")
-
-    if item.status == LeaveStatus.pending and item.approval_stage == LeaveApprovalStage.hr.value:
-        item.reviewed_by_user_id = int(current_user.id)
-        item.reviewed_by_name = str(current_user.full_name)
     db.commit()
     db.refresh(item)
     return {"message": message, "leave": leave_to_payload(item)}

@@ -22,8 +22,39 @@ function mapStatusForHr(status) {
     return 'pending-hr';
 }
 
+function mapLeaveStageForHr(item) {
+    var status = (item.status || '').toLowerCase();
+    if (status === 'approved' || status === 'rejected') {
+        return status;
+    }
+
+    var stage = (item.approvalStage || '').toLowerCase();
+    if (stage === 'school_director') {
+        return 'pending-sd';
+    }
+    if (stage === 'hr') {
+        return 'pending-hr';
+    }
+    return 'pending-head';
+}
+
+function getLeaveStageLabel(status) {
+    var labels = {
+        'pending-head': 'Pending - Dept. Head',
+        'pending-hr': 'Pending - HR Evaluator',
+        'pending-sd': 'Pending - SD',
+        approved: 'Approved',
+        rejected: 'Rejected'
+    };
+    return labels[status] || 'Pending';
+}
+
 function mapLeaveToApp(item) {
-    var normalizedStatus = mapStatusForHr((item.status || '').toLowerCase());
+    var normalizedStatus = mapLeaveStageForHr(item);
+    var displayStatus = item.displayStatus || getLeaveStageLabel(normalizedStatus);
+    var pendingWith = normalizedStatus === 'pending-head'
+        ? 'Department Head'
+        : (normalizedStatus === 'pending-hr' ? 'HR Evaluator' : (normalizedStatus === 'pending-sd' ? 'School Director' : 'Completed'));
     return {
         id: 'LR-' + item.id,
         sourceType: 'leave',
@@ -36,16 +67,16 @@ function mapLeaveToApp(item) {
         position: item.leaveType || 'Leave Request',
         applyingFor: item.leaveType || 'Leave Request',
         submitted: item.dateFiled || '---',
-        progress: normalizedStatus === 'pending-hr' ? 'In Review' : 'Completed',
+        progress: normalizedStatus.indexOf('pending-') === 0 ? 'In Review' : 'Completed',
         status: normalizedStatus,
-        statusLabel: normalizedStatus === 'pending-hr' ? 'Pending - HR Evaluator' : (normalizedStatus === 'approved' ? 'Approved' : 'Rejected'),
+        statusLabel: displayStatus,
         reviewedBy: item.reviewedBy || '---',
         headReviewedBy: item.reviewedBy || '---',
         headReviewedAt: item.submitTime || '---',
         finalReviewedBy: item.reviewedBy || '---',
         finalReviewedAt: item.submitTime || '---',
-        pendingWith: normalizedStatus === 'pending-hr' ? 'HR Evaluator' : 'Completed',
-        remarks: item.reviewRemarks || 'Awaiting review.',
+        pendingWith: pendingWith,
+        remarks: item.reviewRemarks || (displayStatus.indexOf('Pending') === 0 ? displayStatus : 'Awaiting review.'),
         headRemarks: item.reason || '---',
         fileName: item.fileName || 'No Document Attached'
     };

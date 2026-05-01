@@ -71,6 +71,7 @@ class LeaveStatus(str, Enum):
 class LeaveApprovalStage(str, Enum):
     department_head = "department_head"
     hr = "hr"
+    school_director = "school_director"
     completed = "completed"
 
 
