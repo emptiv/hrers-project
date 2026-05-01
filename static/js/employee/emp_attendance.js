@@ -558,7 +558,10 @@ function renderWeekly() {
                 ${r.undertime ? `<br><small style="color: #dc2626; font-weight: 600;">-${r.undertime} UT</small>` : ""}
             </td>
 
-            <td><span class="status-badge ${r.status}">${capitalize(r.status)}</span></td>
+            <td>
+                <span class="status-badge ${r.status}">${capitalize(r.status)}</span>
+                ${r.notes ? `<br><small style="color:#6a1b9a;font-style:italic;font-size:0.72rem;">${escapeHtml(r.notes)}</small>` : ""}
+            </td>
 
         </tr>
 
@@ -656,6 +659,8 @@ function renderMonthly() {
                 <span class="day-num">${d}</span>
 
                 ${statusClass ? `<span class="day-status ${statusClass}">${statusLabel}</span>` : ""}
+
+                ${att && att.notes ? `<span style="display:block;font-size:0.65rem;color:#6a1b9a;font-style:italic;margin-top:2px;line-height:1.2;">${escapeHtml(att.notes)}</span>` : ""}
 
                 ${hoursLabel  ? `<span class="day-hours">${hoursLabel}</span>` : ""}
 
@@ -888,7 +893,9 @@ function renderInlineWeekly(data) {
     for (let i = 0; i < 7; i++) {
         const r = rows[i] || { hours: '--', status: '' };
         const hours = escapeHtml(r.hours || '--');
-        const status = r.status ? `<div class="muted">${escapeHtml(capitalize(r.status || ''))}</div>` : '';
+        const statusText = r.status ? capitalize(r.status || '') : '';
+        const notesText = r.notes ? `<div style="font-size:0.65rem;color:#6a1b9a;font-style:italic;">${escapeHtml(r.notes)}</div>` : '';
+        const status = statusText ? `<div class="muted">${escapeHtml(statusText)}</div>${notesText}` : '';
         rowHtml += `<td>${hours}${status}</td>`;
     }
     rowHtml += `</tr>`;

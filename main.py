@@ -21,7 +21,7 @@ from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from auth import authenticate_user, create_access_token, get_current_user, get_current_user_optional, hash_password, require_roles
-from database import Base, engine, get_db
+from database import Base, engine, get_db, SessionLocal
 from models import (
     AuditLog,
     AttendanceRecord,
@@ -808,6 +808,38 @@ def attendance_summary_payload(record: AttendanceRecord | None) -> dict:
     }
 
 
+def apply_leave_to_attendance(db: Session, leave: LeaveRequest) -> None:
+    """Upsert AttendanceRecord rows with status=Leave for every day in the approved leave range."""
+    current_day = leave.start_date
+    leave_note = str(leave.leave_type)
+    while current_day <= leave.end_date:
+        existing = (
+            db.query(AttendanceRecord)
+            .filter(
+                AttendanceRecord.user_id == int(leave.requester_user_id),
+                AttendanceRecord.record_date == current_day,
+            )
+            .first()
+        )
+        if existing:
+            if not existing.time_in:
+                existing.status = AttendanceStatus.leave
+                existing.notes = leave_note
+        else:
+            db.add(
+                AttendanceRecord(
+                    user_id=int(leave.requester_user_id),
+                    record_date=current_day,
+                    time_in=None,
+                    time_out=None,
+                    worked_seconds=0,
+                    status=AttendanceStatus.leave,
+                    notes=leave_note,
+                )
+            )
+        current_day += timedelta(days=1)
+
+
 def build_weekly_attendance_summary(records: list[AttendanceRecord], offset: int) -> dict:
     today = date.today()
     days_since_sunday = (today.weekday() + 1) % 7
@@ -829,16 +861,18 @@ def build_weekly_attendance_summary(records: list[AttendanceRecord], offset: int
             elif worked_seconds < reg_s:
                 ut_label = f"{(reg_s - worked_seconds) // 3600}h {((reg_s - worked_seconds) % 3600) // 60:02d}m"
 
+        is_leave_or_holiday = record and record.status in {AttendanceStatus.leave, AttendanceStatus.holiday}
         rows.append(
             {
                 "date": current_day.strftime("%B %-d, %Y") if os.name != "nt" else current_day.strftime("%B %#d, %Y"),
                 "day": current_day.strftime("%A"),
                 "timeIn": record.time_in.strftime("%-I:%M %p") if record and record.time_in and os.name != "nt" else (record.time_in.strftime("%#I:%M %p") if record and record.time_in else "--"),
                 "timeOut": record.time_out.strftime("%-I:%M %p") if record and record.time_out and os.name != "nt" else (record.time_out.strftime("%#I:%M %p") if record and record.time_out else "--"),
-                "hours": f"{worked_seconds // 3600}h {(worked_seconds % 3600) // 60:02d}m" if record else "--",
+                "hours": "--" if is_leave_or_holiday else (f"{worked_seconds // 3600}h {(worked_seconds % 3600) // 60:02d}m" if record else "--"),
                 "status": (record.status.value.lower() if record else ("day-off" if current_day.weekday() >= 5 else "absent")),
-                "overtime": ot_label,
-                "undertime": ut_label,
+                "overtime": "" if is_leave_or_holiday else ot_label,
+                "undertime": "" if is_leave_or_holiday else ut_label,
+                "notes": str(record.notes or "") if record else "",
             }
         )
         current_day += timedelta(days=1)
@@ -870,19 +904,22 @@ def build_monthly_attendance_summary(records: list[AttendanceRecord], offset: in
     for record in month_records:
         total_seconds += int(record.worked_seconds or 0)
         worked_seconds = int(record.worked_seconds or 0)
+        is_leave_or_holiday = record.status in {AttendanceStatus.leave, AttendanceStatus.holiday}
         ot_label = ""
         ut_label = ""
-        reg_s = 8 * 3600
-        if worked_seconds > reg_s:
-            ot_label = f"{(worked_seconds - reg_s) // 3600}h {((worked_seconds - reg_s) % 3600) // 60:02d}m"
-        elif worked_seconds > 0 and worked_seconds < reg_s:
-            ut_label = f"{(reg_s - worked_seconds) // 3600}h {((reg_s - worked_seconds) % 3600) // 60:02d}m"
+        if not is_leave_or_holiday:
+            reg_s = 8 * 3600
+            if worked_seconds > reg_s:
+                ot_label = f"{(worked_seconds - reg_s) // 3600}h {((worked_seconds - reg_s) % 3600) // 60:02d}m"
+            elif worked_seconds > 0 and worked_seconds < reg_s:
+                ut_label = f"{(reg_s - worked_seconds) // 3600}h {((reg_s - worked_seconds) % 3600) // 60:02d}m"
 
         attendance_map[record.record_date.day] = {
             "status": record.status.value.lower(),
-            "hours": f"{worked_seconds // 3600}h {(worked_seconds % 3600) // 60:02d}m",
+            "hours": "--" if is_leave_or_holiday else f"{worked_seconds // 3600}h {(worked_seconds % 3600) // 60:02d}m",
             "overtime": ot_label,
             "undertime": ut_label,
+            "notes": str(record.notes or ""),
         }
 
     return {
@@ -923,9 +960,10 @@ def build_attendance_period_rows(records: list[AttendanceRecord], start_date: da
             status_value = record.status.value.lower()
             if record.time_in and not record.time_out and current_day == today:
                 status_value = "active"
+            is_leave_or_holiday = record.status in {AttendanceStatus.leave, AttendanceStatus.holiday}
             ot_label = ""
             ut_label = ""
-            if worked_seconds > 0 and status_value != "active":
+            if worked_seconds > 0 and status_value != "active" and not is_leave_or_holiday:
                 reg_s = 8 * 3600
                 if worked_seconds > reg_s:
                     ot_label = format_attendance_duration(worked_seconds - reg_s)
@@ -937,12 +975,13 @@ def build_attendance_period_rows(records: list[AttendanceRecord], start_date: da
                     "date": format_attendance_date(current_day),
                     "isoDate": current_day.isoformat(),
                     "day": current_day.strftime("%A"),
-                    "timeIn": format_attendance_time(record.time_in),
-                    "timeOut": format_attendance_time(record.time_out),
-                    "hours": format_attendance_duration(worked_seconds) if worked_seconds else "Present",
+                    "timeIn": "--" if is_leave_or_holiday else format_attendance_time(record.time_in),
+                    "timeOut": "--" if is_leave_or_holiday else format_attendance_time(record.time_out),
+                    "hours": "--" if is_leave_or_holiday else (format_attendance_duration(worked_seconds) if worked_seconds else "Present"),
                     "status": status_value,
                     "overtime": ot_label,
                     "undertime": ut_label,
+                    "notes": str(record.notes or ""),
                 }
             )
         else:
@@ -957,6 +996,7 @@ def build_attendance_period_rows(records: list[AttendanceRecord], start_date: da
                     "status": "day-off" if current_day.weekday() >= 5 else "absent",
                     "overtime": "",
                     "undertime": "",
+                    "notes": "",
                 }
             )
         current_day += timedelta(days=1)
@@ -1065,6 +1105,24 @@ def startup() -> None:
         raise RuntimeError(
             "Unable to connect to the database. Check DATABASE_URL, ensure MySQL is running, and create the hrers_project database before starting the app."
         ) from exc
+
+    # ── Backfill attendance records for already-approved leave requests ──
+    # Idempotent: only creates/updates records that don't already have a clock-in.
+    try:
+        _db = SessionLocal()
+        try:
+            approved_leaves = (
+                _db.query(LeaveRequest)
+                .filter(LeaveRequest.status == LeaveStatus.approved)
+                .all()
+            )
+            for leave in approved_leaves:
+                apply_leave_to_attendance(_db, leave)
+            _db.commit()
+        finally:
+            _db.close()
+    except Exception:
+        pass  # Non-fatal: backfill will retry on next startup
 
 
 @app.get("/health")
@@ -1811,6 +1869,7 @@ async def decide_leave_request(
                 item.status = LeaveStatus.approved
                 item.approval_stage = LeaveApprovalStage.completed.value
                 item.review_remarks = remarks or f"Approved by HR {current_user.full_name} on {today_text}."
+                apply_leave_to_attendance(db, item)
                 message = "Request approved."
             else:
                 item.status = LeaveStatus.rejected
@@ -1844,6 +1903,7 @@ async def decide_leave_request(
             item.status = LeaveStatus.approved
             item.approval_stage = LeaveApprovalStage.completed.value
             item.review_remarks = remarks or f"Approved by School Director {current_user.full_name} on {today_text}."
+            apply_leave_to_attendance(db, item)
             message = "Request approved."
         else:
             item.status = LeaveStatus.rejected
@@ -3897,7 +3957,7 @@ def attendance_monitoring(
     week_start = current_week_start - timedelta(days=safe_offset * 7)
     week_end = week_start + timedelta(days=6)
 
-    employees = db.query(User).filter(User.role == UserRole.employee)
+    all_users = db.query(User).filter(User.role != UserRole.admin, User.is_active == True)
 
     if current_user.role == UserRole.department_head:
         head_department_name = get_head_department_name(current_user, db)
@@ -3912,16 +3972,15 @@ def attendance_monitoring(
 
         employees = [
             user
-            for user in employees.order_by(User.full_name.asc()).all()
+            for user in all_users.order_by(User.full_name.asc()).all()
             if get_user_department_name(user, db) == head_department_name
         ]
     else:
         employees = (
-        db.query(User)
-        .filter(User.role == UserRole.employee)
-        .order_by(User.full_name.asc())
-        .all()
-    )
+            all_users
+            .order_by(User.full_name.asc())
+            .all()
+        )
     employee_ids = [int(user.id) for user in employees]
 
     records = []

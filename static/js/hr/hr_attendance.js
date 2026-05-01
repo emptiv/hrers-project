@@ -292,7 +292,10 @@ async function refreshModalUI() {
                     ${r.overtime ? `<br><small style="color: #059669; font-weight: 600;">+${r.overtime} OT</small>` : ""}
                     ${r.undertime ? `<br><small style="color: #dc2626; font-weight: 600;">-${r.undertime} UT</small>` : ""}
                 </td>
-                <td><span class="status-badge ${r.status}">${capitalize(r.status)}</span></td>
+                <td>
+                    <span class="status-badge ${r.status}">${capitalize(r.status)}</span>
+                    ${r.notes ? `<br><small style="color:#6a1b9a;font-style:italic;font-size:0.72rem;">${escapeHtml(r.notes)}</small>` : ""}
+                </td>
             </tr>
         `).join("");
 
@@ -314,6 +317,7 @@ async function refreshModalUI() {
                 <div class="month-day-cell">
                     <span class="day-num">${d}</span>
                     ${statusClass ? `<span class="day-status ${statusClass}">${att ? capitalize(att.status) : "Off"}</span>` : ""}
+                    ${att && att.notes ? `<span style="display:block;font-size:0.65rem;color:#6a1b9a;font-style:italic;margin-top:2px;line-height:1.2;">${escapeHtml(att.notes)}</span>` : ""}
                     ${att ? `<span class="day-hours">${att.hours}</span>` : ""}
                 </div>`;
         }

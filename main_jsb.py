@@ -666,6 +666,39 @@ def attendance_to_payload(item: AttendanceRecord) -> dict:
     }
 
 
+def apply_leave_to_attendance(db: Session, leave: LeaveRequest) -> None:
+    """Upsert AttendanceRecord rows with status=Leave for every day in the approved leave range."""
+    current_day = leave.start_date
+    leave_note = str(leave.leave_type)
+    while current_day <= leave.end_date:
+        existing = (
+            db.query(AttendanceRecord)
+            .filter(
+                AttendanceRecord.user_id == int(leave.requester_user_id),
+                AttendanceRecord.record_date == current_day,
+            )
+            .first()
+        )
+        if existing:
+            # Only override if the employee hasn't already clocked in/out
+            if not existing.time_in:
+                existing.status = AttendanceStatus.leave
+                existing.notes = leave_note
+        else:
+            db.add(
+                AttendanceRecord(
+                    user_id=int(leave.requester_user_id),
+                    record_date=current_day,
+                    time_in=None,
+                    time_out=None,
+                    worked_seconds=0,
+                    status=AttendanceStatus.leave,
+                    notes=leave_note,
+                )
+            )
+        current_day += timedelta(days=1)
+
+
 def attendance_summary_payload(record: AttendanceRecord | None) -> dict:
     if not record:
         return {"clockedIn": False, "timeIn": None, "workedSeconds": 0, "status": "Not started"}
@@ -699,16 +732,18 @@ def build_weekly_attendance_summary(records: list[AttendanceRecord], offset: int
             elif worked_seconds < reg_s:
                 ut_label = f"{(reg_s - worked_seconds) // 3600}h {((reg_s - worked_seconds) % 3600) // 60:02d}m"
 
+        is_leave_or_holiday = record and record.status in {AttendanceStatus.leave, AttendanceStatus.holiday}
         rows.append(
             {
                 "date": current_day.strftime("%B %-d, %Y") if os.name != "nt" else current_day.strftime("%B %#d, %Y"),
                 "day": current_day.strftime("%A"),
                 "timeIn": record.time_in.strftime("%-I:%M %p") if record and record.time_in and os.name != "nt" else (record.time_in.strftime("%#I:%M %p") if record and record.time_in else "--"),
                 "timeOut": record.time_out.strftime("%-I:%M %p") if record and record.time_out and os.name != "nt" else (record.time_out.strftime("%#I:%M %p") if record and record.time_out else "--"),
-                "hours": f"{worked_seconds // 3600}h {(worked_seconds % 3600) // 60:02d}m" if record else "--",
+                "hours": "--" if is_leave_or_holiday else (f"{worked_seconds // 3600}h {(worked_seconds % 3600) // 60:02d}m" if record else "--"),
                 "status": (record.status.value.lower() if record else ("day-off" if current_day.weekday() >= 5 else "absent")),
-                "overtime": ot_label,
-                "undertime": ut_label,
+                "overtime": "" if is_leave_or_holiday else ot_label,
+                "undertime": "" if is_leave_or_holiday else ut_label,
+                "notes": str(record.notes or "") if record else "",
             }
         )
         current_day += timedelta(days=1)
@@ -739,9 +774,11 @@ def build_monthly_attendance_summary(records: list[AttendanceRecord], offset: in
 
     for record in month_records:
         total_seconds += int(record.worked_seconds or 0)
+        is_leave_or_holiday = record.status in {AttendanceStatus.leave, AttendanceStatus.holiday}
         attendance_map[record.record_date.day] = {
             "status": record.status.value.lower(),
-            "hours": f"{int(record.worked_seconds or 0) // 3600}h {(int(record.worked_seconds or 0) % 3600) // 60:02d}m",
+            "hours": "--" if is_leave_or_holiday else f"{int(record.worked_seconds or 0) // 3600}h {(int(record.worked_seconds or 0) % 3600) // 60:02d}m",
+            "notes": str(record.notes or ""),
         }
 
     return {
@@ -1425,6 +1462,7 @@ async def decide_leave_request(
                 item.status = LeaveStatus.approved
                 item.approval_stage = LeaveApprovalStage.completed.value
                 item.review_remarks = remarks or f"Approved by HR {current_user.full_name} on {today_text}."
+                apply_leave_to_attendance(db, item)
                 message = "Request approved."
             else:
                 item.status = LeaveStatus.rejected
@@ -1458,6 +1496,7 @@ async def decide_leave_request(
             item.status = LeaveStatus.approved
             item.approval_stage = LeaveApprovalStage.completed.value
             item.review_remarks = remarks or f"Approved by School Director {current_user.full_name} on {today_text}."
+            apply_leave_to_attendance(db, item)
             message = "Request approved."
         else:
             item.status = LeaveStatus.rejected
@@ -3346,7 +3385,7 @@ def attendance_monitoring(
 
     employees = (
         db.query(User)
-        .filter(User.role == UserRole.employee, User.is_active == True)
+        .filter(User.role != UserRole.admin, User.is_active == True)
         .order_by(User.full_name.asc())
         .all()
     )
