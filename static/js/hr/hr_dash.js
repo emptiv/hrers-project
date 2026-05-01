@@ -11,13 +11,14 @@ document.addEventListener('DOMContentLoaded', function() {
 let attendanceChartInstance = null;
 
 function initializeDashboard() {
+    // Initialize chart first so it's ready for data
+    initializeAttendanceChart();
+
     Promise.all([
         loadProfileSummary(),
         loadDashboardNotifications(),
         loadDashboardData(),
-    ]).then(function () {
-        initializeAttendanceChart();
-    });
+    ]);
 }
 
 /* =================================
@@ -282,6 +283,10 @@ async function loadDashboardData() {
         if (kpiResponse.ok) {
             const payload = await kpiResponse.json();
             totalEmployees = Number(payload.totalEmployees || totalEmployees);
+            const attendanceRateEl = document.getElementById('attendanceRate');
+            if (attendanceRateEl) {
+                attendanceRateEl.textContent = `${Number(payload.attendanceRate ?? 0).toFixed(1)}%`;
+            }
         }
 
         if (chartResponse.ok) {

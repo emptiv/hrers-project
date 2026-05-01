@@ -60,13 +60,8 @@
                             <option value="custom">Custom</option>
                         </select>
 
-                        <select id="school" class="filter-select">
-                            <option value="all">All Schools</option>
-                            <option value="cs">Computer Science</option>
-                            <option value="engineering">Engineering</option>
-                            <option value="nursing">Nursing</option>
-                            <option value="criminology">Criminology</option>
-                            <option value="education">Education</option>
+                        <select id="department" class="filter-select">
+                            <option value="all">All Departments</option>
                         </select>
 
                         <button class="btn-custom-report" id="customReportBtn">
@@ -194,20 +189,20 @@
                     <h2 class="section-title">Summary Statistics</h2>
                     <div class="stats-grid">
                         <div class="stat-item">
-                            <span class="stat-label">New Hires (This Month)</span>
-                            <span class="stat-value">12</span>
+                            <span class="stat-label">Total Approved Leaves</span>
+                            <span class="stat-value" id="statApprovedLeaves">--</span>
                         </div>
                         <div class="stat-item">
-                            <span class="stat-label">Separations (This Month)</span>
-                            <span class="stat-value">2</span>
+                            <span class="stat-label">Total Leave Requests</span>
+                            <span class="stat-value" id="statTotalLeaves">--</span>
                         </div>
                         <div class="stat-item">
-                            <span class="stat-label">Leave Days Used (This Month)</span>
-                            <span class="stat-value">245</span>
+                            <span class="stat-label">Pending Position Changes</span>
+                            <span class="stat-value" id="statPendingChanges">--</span>
                         </div>
                         <div class="stat-item">
-                            <span class="stat-label">Training Hours (This Month)</span>
-                            <span class="stat-value">128</span>
+                            <span class="stat-label">Active Departments</span>
+                            <span class="stat-value" id="statActiveDepts">--</span>
                         </div>
                     </div>
                 </section>
@@ -255,14 +250,9 @@
                         <label class="section-label">Filters</label>
                         
                         <div class="filter-item">
-                            <label for="customSchool">School</label>
-                            <select id="customSchool" class="form-select">
-                                <option value="all">All Schools</option>
-                                <option value="cs">Computer Science</option>
-                                <option value="engineering">Engineering</option>
-                                <option value="nursing">Nursing</option>
-                                <option value="criminology">Criminology</option>
-                                <option value="education">Education</option>
+                            <label for="customDepartment">Department</label>
+                            <select id="customDepartment" class="form-select">
+                                <option value="all">All Departments</option>
                             </select>
                         </div>
 

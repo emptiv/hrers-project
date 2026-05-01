@@ -1999,12 +1999,21 @@ def list_employee_directory(
     current_user: User = Depends(require_roles(UserRole.admin, UserRole.school_director, UserRole.hr_evaluator, UserRole.hr_head, UserRole.department_head)),
     db: Session = Depends(get_db),
 ):
-    users = (
-        db.query(User)
-        .filter(User.role == UserRole.employee)
-        .order_by(User.full_name.asc())
-        .all()
-    )
+    # Broaden scope for HR and SD
+    if current_user.role in {UserRole.admin, UserRole.school_director, UserRole.hr_evaluator, UserRole.hr_head}:
+        users = (
+            db.query(User)
+            .filter(User.role != UserRole.admin, User.id != int(current_user.id))
+            .order_by(User.full_name.asc())
+            .all()
+        )
+    else:
+        users = (
+            db.query(User)
+            .filter(User.role == UserRole.employee)
+            .order_by(User.full_name.asc())
+            .all()
+        )
 
     # Restrict listing for department heads to their own department
     if current_user.role == UserRole.department_head:
@@ -2442,17 +2451,41 @@ async def decide_position_request(
 
 
 @app.get("/api/reports/kpi")
-def reports_kpi(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def reports_kpi(department: str = "all", current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     today = date.today()
-    total_employees = db.query(User).filter(User.role == UserRole.employee, User.is_active == True).count()
-    approved_leaves = db.query(LeaveRequest).filter(LeaveRequest.status == LeaveStatus.approved).count()
-    total_leaves = db.query(LeaveRequest).count()
-    pending_position_changes = db.query(PositionChangeRequest).filter(PositionChangeRequest.status == PositionChangeStatus.pending).count()
+    # Broaden scope for HR and SD
+    user_query = db.query(User).filter(
+        User.role != UserRole.admin,
+        User.id != int(current_user.id),
+        User.is_active == True
+    )
+    
+    if department != "all":
+        all_users = user_query.all()
+        needle = department.strip().lower()
+        target_user_ids = [int(u.id) for u in all_users if needle in get_user_department_name(u, db).lower()]
+        total_employees = len(target_user_ids)
+    else:
+        total_employees = user_query.count()
+        target_user_ids = [int(u.id) for u in user_query.all()]
+
+    approved_leaves = db.query(LeaveRequest).filter(
+        LeaveRequest.status == LeaveStatus.approved,
+        LeaveRequest.requester_user_id.in_(target_user_ids)
+    ).count()
+    total_leaves = db.query(LeaveRequest).filter(
+        LeaveRequest.requester_user_id.in_(target_user_ids)
+    ).count()
+    pending_position_changes = db.query(PositionChangeRequest).filter(
+        PositionChangeRequest.status == PositionChangeStatus.pending,
+        PositionChangeRequest.requester_user_id.in_(target_user_ids)
+    ).count()
     total_departments = db.query(Department).filter(Department.is_active == True).count()
 
     present_today = (
         db.query(AttendanceRecord.user_id)
         .filter(
+            AttendanceRecord.user_id.in_(target_user_ids),
             AttendanceRecord.record_date == today,
             AttendanceRecord.status.in_([AttendanceStatus.present, AttendanceStatus.late]),
         )
@@ -2480,16 +2513,20 @@ def reports_kpi(current_user: User = Depends(get_current_user), db: Session = De
     }
 
 
-def build_report_rows(report_type: str, school: str, db: Session) -> list[dict[str, str]]:
-    users = db.query(User).all()
+def build_report_rows(report_type: str, department: str, db: Session, current_user: User = None) -> list[dict[str, str]]:
+    query = db.query(User).filter(User.is_active == True)
+    if current_user:
+        query = query.filter(User.role != UserRole.admin, User.id != int(current_user.id))
+    users = query.all()
     rows: list[dict[str, str]] = []
 
     for user in users:
+        dept_name = get_user_department_name(user, db)
         rows.append(
             {
                 "employee-id": str(user.employee_no or f"EMP-{user.id:04d}"),
                 "name": str(user.full_name),
-                "school": str(user.role.value).replace("_", " ").title(),
+                "department": dept_name,
                 "email": str(user.email),
                 "phone": "N/A",
                 "salary": "N/A",
@@ -2499,9 +2536,9 @@ def build_report_rows(report_type: str, school: str, db: Session) -> list[dict[s
             }
         )
 
-    if school and school != "all":
-        needle = school.replace("-", " ").lower()
-        rows = [row for row in rows if needle in row["school"].lower()]
+    if department and department != "all":
+        needle = department.strip().lower()
+        rows = [row for row in rows if needle in row["department"].lower()]
 
     return rows[:100]
 
@@ -2597,9 +2634,22 @@ def format_relative_time(value: datetime | None) -> str:
 
 
 @app.get("/api/reports/charts")
-def reports_chart_data(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def reports_chart_data(department: str = "all", current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     today = date.today()
-    employees = db.query(User).filter(User.role == UserRole.employee, User.is_active == True).all()
+    # Broaden scope for HR and SD
+    user_query = db.query(User).filter(
+        User.role != UserRole.admin,
+        User.id != int(current_user.id),
+        User.is_active == True
+    )
+    
+    if department != "all":
+        all_users = user_query.all()
+        needle = department.strip().lower()
+        employees = [u for u in all_users if needle in get_user_department_name(u, db).lower()]
+    else:
+        employees = user_query.all()
+        
     total_employees = len(employees)
     employee_ids = [int(item.id) for item in employees]
 
@@ -2773,6 +2823,12 @@ def list_department_head_candidates(current_user: User = Depends(require_roles(U
     }
 
 
+@app.get("/api/departments")
+def list_departments_public(db: Session = Depends(get_db)):
+    depts = db.query(Department).filter(Department.is_active == True).order_by(Department.name.asc()).all()
+    return {"items": [{"id": d.id, "name": d.name} for d in depts]}
+
+
 @app.get("/api/dashboard/notifications")
 def dashboard_notifications(
     current_user: User = Depends(get_current_user),
@@ -2840,23 +2896,23 @@ def dashboard_notifications(
 @app.get("/api/reports/preview")
 def reports_preview(
     reportType: str = "employee-list",
-    school: str = "all",
+    department: str = "all",
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    rows = build_report_rows(reportType, school, db)
+    rows = build_report_rows(reportType, department, db, current_user)
     return {"items": rows, "reportType": reportType}
 
 
 @app.get("/api/reports/export")
 def reports_export(
     reportType: str = "employee-list",
-    school: str = "all",
-    fields: str = "employee-id,name,school,email,phone",
+    department: str = "all",
+    fields: str = "employee-id,name,department,email,phone",
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    rows = build_report_rows(reportType, school, db)
+    rows = build_report_rows(reportType, department, db, current_user)
     field_keys = [field.strip() for field in fields.split(",") if field.strip()]
     if not field_keys:
         field_keys = ["employee-id", "name", "school", "email", "phone"]
