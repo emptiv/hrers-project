@@ -149,7 +149,11 @@ function startTimer() {
 
 async function handleClockIn() {
     const response = await fetch('/api/attendance/clock-in', { method: 'POST' });
-    if (!response.ok) return;
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        if (errorData.detail) alert(errorData.detail);
+        return;
+    }
     
     isClockedIn = true;
     clockBtn.innerText = 'Clock out';

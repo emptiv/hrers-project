@@ -1,4 +1,4 @@
-﻿(function () {
+(function () {
     function stripTime(value) {
         const d = new Date(value);
         d.setHours(0, 0, 0, 0);
@@ -320,12 +320,13 @@
         function renderModalRows(rows) {
             if (!modalTableBody) return;
             if (!rows || !rows.length) {
-                modalTableBody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:1.5rem;">No attendance records found.</td></tr>';
+                modalTableBody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:1.5rem;">No attendance records found.</td></tr>';
                 return;
             }
 
             modalTableBody.innerHTML = rows.map(function (row) {
                 const statusMeta = getStatusMeta(row.status, row.date);
+                const rowDataStr = encodeURIComponent(JSON.stringify(row));
                 return '<tr>' +
                     '<td>' + (row.date || '--') + '</td>' +
                     '<td>' + (row.day || '--') + '</td>' +
@@ -333,8 +334,45 @@
                     '<td>' + (row.timeOut || '--') + '</td>' +
                     '<td>' + (row.hours || '--') + '</td>' +
                     '<td><span class="pill ' + statusMeta.className + '">' + statusMeta.label + '</span></td>' +
+                    '<td>' +
+                        '<button class="btn-edit-record" data-row="' + rowDataStr + '" style="background:none; border:none; color:var(--primary-color); cursor:pointer; margin-right: 0.5rem;"><i class="fas fa-edit"></i></button>' +
+                        '<button class="btn-delete-record" data-date="' + (row.isoDate || row.date) + '" style="background:none; border:none; color:#dc3545; cursor:pointer;"><i class="fas fa-trash-alt"></i></button>' +
+                    '</td>' +
                 '</tr>';
             }).join('');
+            
+            const editBtns = modalTableBody.querySelectorAll('.btn-edit-record');
+            editBtns.forEach(btn => {
+                btn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    const rowData = JSON.parse(decodeURIComponent(this.getAttribute('data-row')));
+                    openEditRecordModal(rowData);
+                });
+            });
+
+            const deleteBtns = modalTableBody.querySelectorAll('.btn-delete-record');
+            deleteBtns.forEach(btn => {
+                btn.addEventListener('click', async function(e) {
+                    e.stopPropagation();
+                    const dateStr = this.getAttribute('data-date');
+                    if (!confirm('Are you sure you want to delete the attendance record for ' + dateStr + '?')) return;
+                    
+                    try {
+                        const response = await fetch('/api/attendance/employee/' + modalEmployeeId + '/record/' + dateStr, {
+                            method: 'DELETE'
+                        });
+                        if (response.ok) {
+                            loadModalAttendance();
+                            loadWeekData();
+                        } else {
+                            const err = await response.json();
+                            alert('Error deleting record: ' + (err.detail || 'Unknown error'));
+                        }
+                    } catch (error) {
+                        alert('Network error deleting record.');
+                    }
+                });
+            });
         }
 
         async function loadModalAttendance() {
@@ -558,5 +596,93 @@
 
         setDateButtonLabel();
         loadWeekData();
+
+        // Edit Record Modal Logic
+        const editRecordModal = document.getElementById('editRecordModal');
+        const closeEditModalBtn = document.querySelector('.close-edit-modal');
+        const editRecordForm = document.getElementById('editRecordForm');
+        const editRecordDate = document.getElementById('editRecordDate');
+        const editRecordDisplayDate = document.getElementById('editRecordDisplayDate');
+        const editTimeIn = document.getElementById('editTimeIn');
+        const editTimeOut = document.getElementById('editTimeOut');
+        const editStatus = document.getElementById('editStatus');
+
+        function parseTimeStr(tStr) {
+            if (!tStr || tStr === '--') return '';
+            // Example: "8:00 AM" or "08:00" -> convert to "HH:MM" for input type="time"
+            const match = tStr.match(/(\d+):(\d+)\s*(AM|PM)?/i);
+            if (!match) return '';
+            let h = parseInt(match[1]);
+            const m = parseInt(match[2]);
+            const ampm = match[3];
+            if (ampm) {
+                if (ampm.toUpperCase() === 'PM' && h < 12) h += 12;
+                if (ampm.toUpperCase() === 'AM' && h === 12) h = 0;
+            }
+            return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+        }
+
+        function openEditRecordModal(row) {
+            editRecordDate.value = row.isoDate || row.date; // backend will use isoDate or date
+            editRecordDisplayDate.textContent = row.date;
+            editTimeIn.value = parseTimeStr(row.timeIn);
+            editTimeOut.value = parseTimeStr(row.timeOut);
+            
+            // Map status to dropdown value
+            const stat = (row.status || '').toLowerCase();
+            if (stat === 'present' || stat === 'active') editStatus.value = 'Present';
+            else if (stat === 'late') editStatus.value = 'Late';
+            else if (stat === 'absent' || stat === 'day-off') editStatus.value = 'Absent';
+            else if (stat === 'leave') editStatus.value = 'Leave';
+            else if (stat === 'holiday') editStatus.value = 'Holiday';
+            else editStatus.value = 'Present';
+            
+            editRecordModal.style.display = 'block';
+        }
+
+        if (closeEditModalBtn) {
+            closeEditModalBtn.addEventListener('click', function() {
+                editRecordModal.style.display = 'none';
+            });
+        }
+        
+        window.addEventListener('click', function(e) {
+            if (e.target === editRecordModal) {
+                editRecordModal.style.display = 'none';
+            }
+        });
+
+        if (editRecordForm) {
+            editRecordForm.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                if (!modalEmployeeId) return;
+
+                const payload = {
+                    isoDate: editRecordDate.value,
+                    timeIn: editTimeIn.value ? editTimeIn.value : '--',
+                    timeOut: editTimeOut.value ? editTimeOut.value : '--',
+                    status: editStatus.value
+                };
+
+                try {
+                    const response = await fetch('/api/attendance/employee/' + modalEmployeeId + '/record', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.ok) {
+                        editRecordModal.style.display = 'none';
+                        loadModalAttendance(); // reload the modal table
+                        loadWeekData(); // reload the main table
+                    } else {
+                        const err = await response.json();
+                        alert('Error updating record: ' + (err.detail || 'Unknown error'));
+                    }
+                } catch (error) {
+                    alert('Network error updating record.');
+                }
+            });
+        }
     });
 })();

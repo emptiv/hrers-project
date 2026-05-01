@@ -903,6 +903,7 @@ def build_attendance_period_rows(records: list[AttendanceRecord], start_date: da
             rows.append(
                 {
                     "date": format_attendance_date(current_day),
+                    "isoDate": current_day.isoformat(),
                     "day": current_day.strftime("%A"),
                     "timeIn": format_attendance_time(record.time_in),
                     "timeOut": format_attendance_time(record.time_out),
@@ -914,6 +915,7 @@ def build_attendance_period_rows(records: list[AttendanceRecord], start_date: da
             rows.append(
                 {
                     "date": format_attendance_date(current_day),
+                    "isoDate": current_day.isoformat(),
                     "day": current_day.strftime("%A"),
                     "timeIn": "--",
                     "timeOut": "--",
@@ -3635,8 +3637,8 @@ def clock_in(
         .filter(AttendanceRecord.user_id == int(current_user.id), AttendanceRecord.record_date == today)
         .first()
     )
-    if record and record.time_in and not record.time_out:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Already clocked in")
+    if record and record.time_in:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Multiple clock-ins are not allowed for the same day")
 
     if not record:
         record = AttendanceRecord(
@@ -3731,6 +3733,119 @@ def get_employee_attendance_details(
     payload = build_employee_attendance_period_payload(records, view, offset)
     payload["employee"] = build_employee_detail_payload(employee, db)
     return payload
+
+
+@app.post("/api/attendance/employee/{employee_id}/record")
+async def update_employee_attendance(
+    employee_id: int,
+    request: Request,
+    current_user: User = Depends(require_roles(UserRole.hr_evaluator, UserRole.hr_head, UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    record_date_str = data.get("isoDate")
+    time_in_str = data.get("timeIn")
+    time_out_str = data.get("timeOut")
+    status_str = data.get("status")
+
+    if not record_date_str or not status_str:
+        raise HTTPException(status_code=400, detail="Missing isoDate or status")
+
+    try:
+        record_date = datetime.strptime(record_date_str, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+
+    employee = db.query(User).filter(User.id == employee_id).first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    record = db.query(AttendanceRecord).filter(
+        AttendanceRecord.user_id == employee_id,
+        AttendanceRecord.record_date == record_date
+    ).first()
+
+    def parse_time(time_str: str | None) -> datetime | None:
+        if not time_str or time_str.strip() == "--":
+            return None
+        # Format might be "%I:%M %p" (e.g. "8:00 AM") or "%H:%M" (e.g. "08:00")
+        try:
+            # Try 12-hour format first
+            try:
+                t = datetime.strptime(time_str.strip(), "%I:%M %p").time()
+            except ValueError:
+                t = datetime.strptime(time_str.strip(), "%H:%M").time()
+            return datetime.combine(record_date, t)
+        except ValueError:
+            return None
+
+    new_time_in = parse_time(time_in_str)
+    new_time_out = parse_time(time_out_str)
+
+    status_map = {
+        "present": AttendanceStatus.present,
+        "late": AttendanceStatus.late,
+        "absent": AttendanceStatus.absent,
+        "leave": AttendanceStatus.leave,
+        "holiday": AttendanceStatus.holiday,
+        "active": AttendanceStatus.present,
+    }
+
+    status_lower = status_str.lower().strip()
+    new_status = status_map.get(status_lower, AttendanceStatus.absent)
+
+    worked_seconds = 0
+    if new_time_in and new_time_out:
+        worked_seconds = max(0, int((new_time_out - new_time_in).total_seconds()))
+
+    if not record:
+        record = AttendanceRecord(
+            user_id=employee_id,
+            record_date=record_date,
+            time_in=new_time_in,
+            time_out=new_time_out,
+            worked_seconds=worked_seconds,
+            status=new_status
+        )
+        db.add(record)
+    else:
+        record.time_in = new_time_in
+        record.time_out = new_time_out
+        record.worked_seconds = worked_seconds
+        record.status = new_status
+
+    db.commit()
+    db.refresh(record)
+    return {"message": "Attendance record updated"}
+
+
+@app.delete("/api/attendance/employee/{employee_id}/record/{record_date_str}")
+async def delete_employee_attendance(
+    employee_id: int,
+    record_date_str: str,
+    current_user: User = Depends(require_roles(UserRole.hr_evaluator, UserRole.hr_head, UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    try:
+        record_date = datetime.strptime(record_date_str, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+
+    record = db.query(AttendanceRecord).filter(
+        AttendanceRecord.user_id == employee_id,
+        AttendanceRecord.record_date == record_date
+    ).first()
+
+    if not record:
+        raise HTTPException(status_code=404, detail="Attendance record not found")
+
+    db.delete(record)
+    db.commit()
+    return {"message": "Attendance record deleted"}
 
 
 @app.get("/api/attendance/monitoring")

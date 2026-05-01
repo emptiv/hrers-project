@@ -247,7 +247,11 @@ async function clockIn() {
 
     const response = await fetch('/api/attendance/clock-in', { method: 'POST' });
 
-    if (!response.ok) return false;
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        if (errorData.detail) alert(errorData.detail);
+        return false;
+    }
 
 
 

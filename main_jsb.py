@@ -3253,8 +3253,8 @@ def clock_in(
         .filter(AttendanceRecord.user_id == int(current_user.id), AttendanceRecord.record_date == today)
         .first()
     )
-    if record and record.time_in and not record.time_out:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Already clocked in")
+    if record and record.time_in:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Multiple clock-ins are not allowed for the same day")
 
     if not record:
         record = AttendanceRecord(
