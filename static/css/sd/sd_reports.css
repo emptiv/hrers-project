@@ -1361,21 +1361,3 @@ hr {
         font-size: 0.85rem;
     }
 }
-
-@media print {
-    .sidebar,
-    .header-controls,
-    .btn-export {
-        display: none !important;
-    }
-    .main-content {
-        margin-left: 0 !important;
-        padding: 0 !important;
-    }
-    body {
-        background: #fff !important;
-    }
-    .background {
-        display: none !important;
-    }
-}

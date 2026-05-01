@@ -2893,10 +2893,10 @@ async def decide_position_request(
 
 
 @app.get("/api/reports/kpi")
-def reports_kpi(department: str = "all", days: int = 30, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def reports_kpi(department: str = "all", current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     today = date.today()
     from datetime import timedelta
-    window_start = today - timedelta(days=max(1, days))
+    window_start = today - timedelta(days=30)
 
     def calc_attendance_rate(user_ids: list[int]) -> float:
         """Rolling 30-day attendance rate: present+late records / all non-holiday records."""
@@ -3128,10 +3128,8 @@ def format_relative_time(value: datetime | None) -> str:
 
 
 @app.get("/api/reports/charts")
-def reports_chart_data(department: str = "all", days: int = 30, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def reports_chart_data(department: str = "all", current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     today = date.today()
-    chart_days = max(1, days)
-    from datetime import timedelta
 
     # ── Scope to dept head's department ──────────────────────────────
     if current_user.role == UserRole.department_head:
@@ -3146,10 +3144,9 @@ def reports_chart_data(department: str = "all", days: int = 30, current_user: Us
 
         attendance_labels: list[str] = []
         attendance_values: list[float] = []
-        for day_offset in range(chart_days - 1, -1, -1):
+        for day_offset in range(6, -1, -1):
             current_day = today - timedelta(days=day_offset)
-            lbl = current_day.strftime("%b %d") if chart_days > 7 else current_day.strftime("%a")
-            attendance_labels.append(lbl)
+            attendance_labels.append(current_day.strftime("%a"))
             if not dept_ids:
                 attendance_values.append(0.0)
                 continue
@@ -3205,10 +3202,9 @@ def reports_chart_data(department: str = "all", days: int = 30, current_user: Us
 
     attendance_labels = []
     attendance_values = []
-    for day_offset in range(chart_days - 1, -1, -1):
+    for day_offset in range(6, -1, -1):
         current_day = today - timedelta(days=day_offset)
-        lbl = current_day.strftime("%b %d") if chart_days > 7 else current_day.strftime("%a")
-        attendance_labels.append(lbl)
+        attendance_labels.append(current_day.strftime("%a"))
         if not employee_ids:
             attendance_values.append(0.0)
             continue

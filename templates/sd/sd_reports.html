@@ -54,14 +54,19 @@
                     <h1 class="dashboard-title">Reports and Analytics</h1>
                     <div class="header-controls">
                         <select id="dateRange" class="filter-select">
-                            <option value="7">Last 7 Days</option>
-                            <option value="30" selected>Last 30 Days</option>
-                            <option value="90">Last 90 Days</option>
+                            <option value="7days">Last 7 Days</option>
+                            <option value="30days">Last 30 Days</option>
+                            <option value="90days">Last 90 Days</option>
+                            <option value="custom">Custom</option>
                         </select>
 
                         <select id="department" class="filter-select">
                             <option value="all">All Departments</option>
                         </select>
+
+                        <button class="btn-custom-report" id="customReportBtn">
+                            <i class="fas fa-plus"></i> Custom Report
+                        </button>
 
                         <button class="btn-export" id="exportBtn">
                             <i class="fas fa-download"></i> Export
@@ -206,14 +211,179 @@
 
         </div>
     </main>
-                <!-- Export Note -->
+
+    <!-- Custom Report Modal -->
+    <div class="modal" id="customReportModal">
+        <div class="modal-overlay" id="customReportOverlay"></div>
+        <div class="modal-content custom-report-modal">
+            <div class="modal-header">
+                <h2>Generate Custom Report</h2>
+                <button class="modal-close-btn" id="closeCustomReportModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+
+            <div class="modal-body">
+                <div class="modal-left">
+                    <!-- Report Type Selection -->
+                    <div class="form-section">
+                        <label class="section-label">Report Type</label>
+                        <div class="report-type-options">
+                            <div class="report-type-option" data-type="employee-list">
+                                <input type="radio" name="reportType" value="employee-list" id="empList">
+                                <label for="empList">Employee List</label>
+                            </div>
+                            <div class="report-type-option" data-type="attendance">
+                                <input type="radio" name="reportType" value="attendance" id="attendance">
+                                <label for="attendance">Attendance</label>
+                            </div>
+                            <div class="report-type-option" data-type="leave">
+                                <input type="radio" name="reportType" value="leave" id="leave">
+                                <label for="leave">Leave</label>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    <!-- Filters -->
+                    <div class="form-section">
+                        <label class="section-label">Filters</label>
+                        
+                        <div class="filter-item">
+                            <label for="customDepartment">Department</label>
+                            <select id="customDepartment" class="form-select">
+                                <option value="all">All Departments</option>
+                            </select>
+                        </div>
+
+                        <div class="filter-item">
+                            <label for="customDateStart">Start Date</label>
+                            <input type="date" id="customDateStart" class="form-select">
+                        </div>
+
+                        <div class="filter-item">
+                            <label for="customDateEnd">End Date</label>
+                            <input type="date" id="customDateEnd" class="form-select">
+                        </div>
+                    </div>
+
+                    <!-- Data Fields -->
+                    <div class="form-section">
+                        <label class="section-label">Data Fields</label>
+                        <div class="checkbox-group">
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="field1" checked>
+                                <label for="field1">Employee ID</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="field2" checked>
+                                <label for="field2">Name</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="field3" checked>
+                                <label for="field3">Department</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="field4">
+                                <label for="field4">Email</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="field5">
+                                <label for="field5">Phone</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="field6">
+                                <label for="field6">Salary</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Buttons -->
+                    <div class="modal-actions">
+                        <button class="btn-primary" id="generateReportBtn">Generate Report</button>
+                        <button class="btn-secondary" id="cancelCustomReportBtn">Cancel</button>
+                    </div>
+                </div>
+
+                <!-- Right Side - Live Preview -->
+                <div class="modal-right">
+                    <div class="preview-header">
+                        <h3>Live Preview</h3>
+                    </div>
+                    <div class="preview-container" id="reportPreview">
+                        <div class="preview-placeholder">
+                            <i class="fas fa-eye"></i>
+                            <p>Select report options to see preview</p>
+                        </div>
+                    </div>
+                    <div class="preview-actions">
+                        <button class="btn-preview-export" id="previewExportBtn">
+                            <i class="fas fa-download"></i> Export Report
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Modal -->
+    <div class="modal" id="exportModal">
+        <div class="modal-overlay" id="exportOverlay"></div>
+        <div class="modal-content export-modal">
+            <div class="modal-header">
+                <h2>Export Report</h2>
+                <button class="modal-close-btn" id="closeExportModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+
+            <div class="modal-body">
+                <!-- Export Format Selection -->
                 <div class="form-section">
-                    <p style="color:#64748b;font-size:0.85rem;">Exports as CSV using the current department and date range filters.</p>
+                    <label class="section-label">Export Format</label>
+                    <div class="export-options">
+                        <div class="export-option">
+                            <input type="radio" name="exportFormat" value="pdf" id="formatPDF" checked>
+                            <label for="formatPDF">
+                                <i class="fas fa-file-pdf"></i>
+                                <span>PDF</span>
+                            </label>
+                        </div>
+                        <div class="export-option">
+                            <input type="radio" name="exportFormat" value="excel" id="formatExcel">
+                            <label for="formatExcel">
+                                <i class="fas fa-file-excel"></i>
+                                <span>Excel</span>
+                            </label>
+                        </div>
+                        <div class="export-option">
+                            <input type="radio" name="exportFormat" value="csv" id="formatCSV">
+                            <label for="formatCSV">
+                                <i class="fas fa-file-csv"></i>
+                                <span>CSV</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Additional Options -->
+                <div class="form-section">
+                    <label class="section-label">Additional Options</label>
+                    <div class="checkbox-group">
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="includeCharts" checked>
+                            <label for="includeCharts">Include Charts</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="includeSummary" checked>
+                            <label for="includeSummary">Include Summary</label>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Export Buttons -->
                 <div class="modal-actions large">
-                    <button class="btn-primary" id="confirmExportBtn">Download CSV</button>
+                    <button class="btn-primary" id="confirmExportBtn">Export</button>
                     <button class="btn-secondary" id="cancelExportBtn">Cancel</button>
                 </div>
             </div>
