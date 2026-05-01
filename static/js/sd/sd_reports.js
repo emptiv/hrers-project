@@ -90,361 +90,12 @@ function setupEventListeners() {
    ================================= */
 
 function setupModalListeners() {
-    // Custom Report Modal
-    const customReportBtn = document.getElementById('customReportBtn');
-    const customReportModal = document.getElementById('customReportModal');
-    const closeCustomReportModal = document.getElementById('closeCustomReportModal');
-    const cancelCustomReportBtn = document.getElementById('cancelCustomReportBtn');
-    const customReportOverlay = document.getElementById('customReportOverlay');
-    const generateReportBtn = document.getElementById('generateReportBtn');
-    const previewExportBtn = document.getElementById('previewExportBtn');
-    
-    // Export Modal
     const exportBtn = document.getElementById('exportBtn');
-    const exportModal = document.getElementById('exportModal');
-    const closeExportModal = document.getElementById('closeExportModal');
-    const cancelExportBtn = document.getElementById('cancelExportBtn');
-    const exportOverlay = document.getElementById('exportOverlay');
-    const confirmExportBtn = document.getElementById('confirmExportBtn');
     
-    // Custom Report Modal Functions
-    if (customReportBtn) {
-        customReportBtn.addEventListener('click', () => {
-            openModal(customReportModal);
-        });
-    }
-    
-    if (closeCustomReportModal) {
-        closeCustomReportModal.addEventListener('click', () => {
-            closeModal(customReportModal);
-        });
-    }
-    
-    if (cancelCustomReportBtn) {
-        cancelCustomReportBtn.addEventListener('click', () => {
-            closeModal(customReportModal);
-        });
-    }
-    
-    if (customReportOverlay) {
-        customReportOverlay.addEventListener('click', () => {
-            closeModal(customReportModal);
-        });
-    }
-    
-    if (generateReportBtn) {
-        generateReportBtn.addEventListener('click', () => {
-            handleGenerateReport();
-        });
-    }
-    
-    if (previewExportBtn) {
-        previewExportBtn.addEventListener('click', () => {
-            handlePreviewExport();
-        });
-    }
-    
-    // Export Modal Functions
     if (exportBtn) {
         exportBtn.addEventListener('click', () => {
-            openModal(exportModal);
+            window.print();
         });
-    }
-    
-    if (closeExportModal) {
-        closeExportModal.addEventListener('click', () => {
-            closeModal(exportModal);
-        });
-    }
-    
-    if (cancelExportBtn) {
-        cancelExportBtn.addEventListener('click', () => {
-            closeModal(exportModal);
-        });
-    }
-    
-    if (exportOverlay) {
-        exportOverlay.addEventListener('click', () => {
-            closeModal(exportModal);
-        });
-    }
-    
-    if (confirmExportBtn) {
-        confirmExportBtn.addEventListener('click', () => {
-            handleExport();
-        });
-    }
-    
-    // Report Type Selection
-    const reportTypeOptions = document.querySelectorAll('.report-type-option');
-    reportTypeOptions.forEach(option => {
-        option.addEventListener('click', () => {
-            const radio = option.querySelector('input[type="radio"]');
-            radio.checked = true;
-            updateReportPreview();
-        });
-    });
-    
-    // Report Form Fields
-    const reportFormInputs = document.querySelectorAll('#customDepartment, #customDateStart, #customDateEnd');
-    reportFormInputs.forEach(input => {
-        input.addEventListener('change', () => {
-            updateReportPreview();
-        });
-    });
-    
-    const checkboxes = document.querySelectorAll('.checkbox-item input[type="checkbox"]');
-    checkboxes.forEach(checkbox => {
-        checkbox.addEventListener('change', () => {
-            updateReportPreview();
-        });
-    });
-}
-
-/* =================================
-   MODAL FUNCTIONS
-   ================================= */
-
-function openModal(modal) {
-    if (modal) {
-        modal.classList.add('active');
-    }
-}
-
-function closeModal(modal) {
-    if (modal) {
-        modal.classList.remove('active');
-    }
-}
-
-/* =================================
-   CUSTOM REPORT PREVIEW
-   ================================= */
-
-async function updateReportPreview() {
-    const reportTypeEl = document.querySelector('input[name="reportType"]:checked');
-    const department  = document.getElementById('customDepartment')?.value || 'all';
-    const dateStart   = document.getElementById('customDateStart')?.value || '';
-    const dateEnd     = document.getElementById('customDateEnd')?.value || '';
-
-    const previewContainer = document.getElementById('reportPreview');
-
-    if (!reportTypeEl) {
-        previewContainer.innerHTML = `
-            <div class="preview-placeholder">
-                <i class="fas fa-eye"></i>
-                <p>Select report options to see preview</p>
-            </div>
-        `;
-        return;
-    }
-
-    const reportType = reportTypeEl.value;
-    const fieldDefs  = REPORT_FIELD_DEFS[reportType] || REPORT_FIELD_DEFS['employee-list'];
-
-    // Which fields are checked (or all if none checked)
-    const checkedLabels = Array.from(document.querySelectorAll('.checkbox-item input[type="checkbox"]:checked'))
-        .map(cb => cb.nextElementSibling?.innerText?.trim() || '');
-    const activeDefs = checkedLabels.length > 0
-        ? fieldDefs.filter(f => checkedLabels.some(l => l.toLowerCase() === f.label.toLowerCase()))
-        : fieldDefs;
-
-    const params = new URLSearchParams({ reportType, department });
-    if (dateStart) params.set('dateStart', dateStart);
-    if (dateEnd)   params.set('dateEnd',   dateEnd);
-
-    let reportData = [];
-    try {
-        const response = await fetch(`/api/reports/preview?${params.toString()}`);
-        if (response.ok) {
-            const payload = await response.json();
-            reportData = payload.items || [];
-        }
-    } catch (error) {
-        reportData = [];
-    }
-
-    const reportLabel = reportTypeEl.nextElementSibling?.innerText || reportType;
-    previewContainer.innerHTML = `
-        <div class="preview-content">
-            <h4>${reportLabel} Report</h4>
-            <p style="color: #64748b; font-size: 0.85rem; margin: 0.5rem 0 1rem 0;">
-                ${department !== 'all' ? `Department: ${department} | ` : ''}
-                ${dateStart ? `From: ${dateStart} | ` : ''}
-                ${dateEnd ? `To: ${dateEnd}` : ''}
-                ${reportData.length} record(s)
-            </p>
-            <div style="overflow-x:auto;">
-            <table class="preview-table">
-                <thead>
-                    <tr>
-                        ${activeDefs.map(f => `<th>${f.label}</th>`).join('')}
-                    </tr>
-                </thead>
-                <tbody>
-                    ${reportData.slice(0, 20).map(row => `
-                        <tr>
-                            ${activeDefs.map(f => `<td>${row[f.key] ?? 'N/A'}</td>`).join('')}
-                        </tr>
-                    `).join('')}
-                    ${reportData.length === 0 ? '<tr><td colspan="10" style="text-align:center;color:#64748b;">No data found</td></tr>' : ''}
-                </tbody>
-            </table>
-            </div>
-            ${reportData.length > 20 ? `<p style="color:#64748b;font-size:0.8rem;margin-top:0.5rem;">Showing 20 of ${reportData.length} records. Export for full data.</p>` : ''}
-        </div>
-    `;
-}
-
-
-
-// Per-report-type field definitions matching backend row keys
-const REPORT_FIELD_DEFS = {
-    'employee-list': [
-        { key: 'employee-id', label: 'Employee ID' },
-        { key: 'name',        label: 'Name' },
-        { key: 'department',  label: 'Department' },
-        { key: 'email',       label: 'Email' },
-        { key: 'phone',       label: 'Phone' },
-        { key: 'role',        label: 'Role' },
-        { key: 'date-hired',  label: 'Date Hired' },
-    ],
-    'attendance': [
-        { key: 'employee-id',    label: 'Employee ID' },
-        { key: 'name',           label: 'Name' },
-        { key: 'department',     label: 'Department' },
-        { key: 'present-days',   label: 'Present Days' },
-        { key: 'leave-days',     label: 'Leave Days' },
-        { key: 'total-days',     label: 'Total Days' },
-        { key: 'attendance-rate',label: 'Attendance Rate' },
-    ],
-    'leave': [
-        { key: 'employee-id',       label: 'Employee ID' },
-        { key: 'name',              label: 'Name' },
-        { key: 'department',        label: 'Department' },
-        { key: 'total-requests',    label: 'Total Requests' },
-        { key: 'approved-requests', label: 'Approved' },
-        { key: 'pending-requests',  label: 'Pending' },
-        { key: 'days-used',         label: 'Days Used' },
-    ],
-};
-
-function getSelectedReportConfig() {
-    const reportTypeEl = document.querySelector('input[name="reportType"]:checked');
-    const department = document.getElementById('customDepartment')?.value || 'all';
-    const dateStart  = document.getElementById('customDateStart')?.value || '';
-    const dateEnd    = document.getElementById('customDateEnd')?.value || '';
-
-    // Collect checked field keys from the checkboxes
-    const checkedLabels = Array.from(document.querySelectorAll('.checkbox-item input[type="checkbox"]:checked'))
-        .map(cb => cb.nextElementSibling?.innerText?.trim() || '');
-
-    const reportType = reportTypeEl?.value || 'employee-list';
-    const fieldDefs  = REPORT_FIELD_DEFS[reportType] || REPORT_FIELD_DEFS['employee-list'];
-
-    // Map checked labels → backend keys; fallback to all keys if none checked
-    let fields = fieldDefs
-        .filter(f => checkedLabels.length === 0 || checkedLabels.some(l => l.toLowerCase() === f.label.toLowerCase()))
-        .map(f => f.key);
-    if (fields.length === 0) fields = fieldDefs.map(f => f.key);
-
-    return { reportTypeEl, reportType, department, dateStart, dateEnd, fields };
-}
-
-async function downloadReportExport(triggerLabel) {
-    const config = getSelectedReportConfig();
-
-    const params = new URLSearchParams({
-        reportType: config.reportType,
-        department: config.department,
-        fields:     config.fields.join(','),
-    });
-    if (config.dateStart) params.set('dateStart', config.dateStart);
-    if (config.dateEnd)   params.set('dateEnd',   config.dateEnd);
-
-    const response = await fetch(`/api/reports/export?${params.toString()}`);
-    if (!response.ok) {
-        const errorPayload = await response.json().catch(() => ({ detail: 'Unable to export report.' }));
-        throw new Error(errorPayload.detail || 'Unable to export report.');
-    }
-
-    const blob = await response.blob();
-    const url  = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href  = url;
-    link.download = `${config.reportType}_${config.department}_${triggerLabel}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(url);
-    return true;
-}
-
-async function handleGenerateReport() {
-    const config = getSelectedReportConfig();
-    if (!config.reportTypeEl) {
-        showToast('warning', 'Please select a report type', 'No report type selected');
-        return;
-    }
-
-    const toastId = showToast('info', 'Generating report...', 'Preparing a live CSV export', true);
-    try {
-        await downloadReportExport('generated');
-        removeToast(toastId);
-        const label = config.reportTypeEl.nextElementSibling?.innerText || config.reportType;
-        showToast('success', 'Report generated successfully!', `Your ${label} report has been downloaded`, false, 3000);
-    } catch (error) {
-        removeToast(toastId);
-        showToast('error', 'Report generation failed', error.message || 'Unable to export report', false, 3000);
-    }
-}
-
-async function handlePreviewExport() {
-    const config = getSelectedReportConfig();
-    if (!config.reportTypeEl) {
-        showToast('warning', 'Please select a report type', 'No report type selected');
-        return;
-    }
-
-    const toastId = showToast('info', 'Downloading report...', 'Your report is being prepared for download', true);
-    try {
-        await downloadReportExport('preview');
-        removeToast(toastId);
-        showToast('success', 'Report downloaded!', 'Your report has been saved to downloads', false, 3000);
-    } catch (error) {
-        removeToast(toastId);
-        showToast('error', 'Download failed', error.message || 'Unable to export report', false, 3000);
-    }
-}
-
-/* =================================
-   EXPORT FUNCTIONALITY
-   ================================= */
-
-async function handleExport() {
-    // Top-level Export button: export all employees by default
-    const toastId = showToast('info', 'Exporting report...', 'Preparing a live CSV download', true);
-
-    // If no report type is selected in the modal, default to employee-list
-    const reportTypeEl = document.querySelector('input[name="reportType"]:checked');
-    if (!reportTypeEl) {
-        // Force-select employee-list so downloadReportExport works
-        const empListRadio = document.getElementById('empList');
-        if (empListRadio) empListRadio.checked = true;
-    }
-
-    const department = document.getElementById('department')?.value || 'all';
-    const customDept = document.getElementById('customDepartment');
-    if (customDept && !customDept.value) customDept.value = department;
-
-    try {
-        await downloadReportExport('export');
-        removeToast(toastId);
-        showToast('success', 'Export complete!', 'Report exported as CSV', false, 3000);
-        closeModal(document.getElementById('exportModal'));
-    } catch (error) {
-        removeToast(toastId);
-        showToast('error', 'Export failed', error.message || 'Unable to export report', false, 3000);
     }
 }
 
@@ -453,14 +104,18 @@ async function handleExport() {
    ================================= */
 
 function handleDateRangeChange(range) {
-    // Update charts and data based on date range
-    updateChartsWithDateRange(range);
+    // range is like '7days', '30days', '90days'
+    const days = parseInt(range.replace('days', '')) || 30;
+    const department = document.getElementById('department')?.value || 'all';
+    loadKPIData(department, days);
+    loadChartData(department, days);
 }
 
 function handleDepartmentChange(department) {
-    // Reload dashboard with department filter
-    loadKPIData(department);
-    loadChartData(department);
+    const range = document.getElementById('dateRange')?.value || '30days';
+    const days = parseInt(range.replace('days', '')) || 30;
+    loadKPIData(department, days);
+    loadChartData(department, days);
 }
 
 /* =================================
@@ -640,7 +295,6 @@ function initializeDepartmentChart() {
 
 async function loadDepartments() {
     const departmentSelect = document.getElementById('department');
-    const customDepartmentSelect = document.getElementById('customDepartment');
     
     try {
         const response = await fetch('/api/departments');
@@ -653,11 +307,6 @@ async function loadDepartments() {
                 opt1.value = dept.name;
                 opt1.textContent = dept.name;
                 if (departmentSelect) departmentSelect.appendChild(opt1);
-                
-                const opt2 = document.createElement('option');
-                opt2.value = dept.name;
-                opt2.textContent = dept.name;
-                if (customDepartmentSelect) customDepartmentSelect.appendChild(opt2);
             });
         }
     } catch (error) {
@@ -670,7 +319,7 @@ async function loadDepartments() {
    ================================= */
 
 function updateChartsWithDateRange(range) {
-    // This function would update chart data based on selected date range
+    handleDateRangeChange(range);
 }
 
 function updateChartsWithSchool(school) {
@@ -683,18 +332,20 @@ function updateChartsWithSchool(school) {
 
 function loadDashboardData() {
     const department = document.getElementById('department')?.value || 'all';
-    loadKPIData(department);
-    loadChartData(department);
+    const range = document.getElementById('dateRange')?.value || '30days';
+    const days = parseInt(range.replace('days', '')) || 30;
+    loadKPIData(department, days);
+    loadChartData(department, days);
 }
 
-async function loadKPIData(department = 'all') {
+async function loadKPIData(department = 'all', days = 30) {
     const totalEmployees = document.getElementById('totalEmployees');
     const attendanceRate = document.getElementById('attendanceRate');
     const turnoverRate = document.getElementById('turnoverRate');
 
 
     try {
-        const response = await fetch(`/api/reports/kpi?department=${encodeURIComponent(department)}`);
+        const response = await fetch(`/api/reports/kpi?department=${encodeURIComponent(department)}&days=${days}`);
         if (!response.ok) {
             throw new Error('Failed to load KPI data');
         }
@@ -725,9 +376,9 @@ async function loadKPIData(department = 'all') {
     }
 }
 
-async function loadChartData(department = 'all') {
+async function loadChartData(department = 'all', days = 30) {
     try {
-        const response = await fetch(`/api/reports/charts?department=${encodeURIComponent(department)}`);
+        const response = await fetch(`/api/reports/charts?department=${encodeURIComponent(department)}&days=${days}`);
         if (!response.ok) {
             throw new Error('Failed to load chart data');
         }
