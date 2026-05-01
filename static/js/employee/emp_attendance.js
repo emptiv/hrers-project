@@ -552,7 +552,11 @@ function renderWeekly() {
 
             <td>${r.timeOut}</td>
 
-            <td>${r.hours}</td>
+            <td>
+                ${r.hours}
+                ${r.overtime ? `<br><small style="color: #059669; font-weight: 600;">+${r.overtime} OT</small>` : ""}
+                ${r.undertime ? `<br><small style="color: #dc2626; font-weight: 600;">-${r.undertime} UT</small>` : ""}
+            </td>
 
             <td><span class="status-badge ${r.status}">${capitalize(r.status)}</span></td>
 

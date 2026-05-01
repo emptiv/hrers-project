@@ -223,7 +223,9 @@ async function loadInlineWeeklySummary(offset = 0) {
     for (let i = 0; i < 7; i++) {
         const r = rows[i] || { hours: '--', status: '' };
         const statusHtml = r.status ? `<div class="muted">${escapeHtml(capitalize(r.status))}</div>` : '';
-        rowHtml += `<td>${escapeHtml(r.hours || '--')}${statusHtml}</td>`;
+        const otHtml = r.overtime ? `<div style="color: #059669; font-size: 0.75rem; font-weight: 600;">+${r.overtime} OT</div>` : '';
+        const utHtml = r.undertime ? `<div style="color: #dc2626; font-size: 0.75rem; font-weight: 600;">-${r.undertime} UT</div>` : '';
+        rowHtml += `<td>${escapeHtml(r.hours || '--')}${statusHtml}${otHtml}${utHtml}</td>`;
     }
     rowHtml += `</tr>`;
     inlineTableBody.innerHTML = rowHtml;
@@ -287,7 +289,11 @@ async function refreshModalUI() {
                 <td>${r.day}</td>
                 <td>${r.timeIn || '--'}</td>
                 <td>${r.timeOut || '--'}</td>
-                <td>${r.hours || '--'}</td>
+                <td>
+                    ${r.hours || '--'}
+                    ${r.overtime ? `<br><small style="color: #059669; font-weight: 600;">+${r.overtime} OT</small>` : ""}
+                    ${r.undertime ? `<br><small style="color: #dc2626; font-weight: 600;">-${r.undertime} UT</small>` : ""}
+                </td>
                 <td><span class="status-badge ${r.status}">${capitalize(r.status)}</span></td>
             </tr>
         `).join("");

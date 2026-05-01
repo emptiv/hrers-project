@@ -689,14 +689,26 @@ def build_weekly_attendance_summary(records: list[AttendanceRecord], offset: int
     current_day = target_start
     while current_day <= target_end:
         record = next((item for item in week_records if item.record_date == current_day), None)
+        worked_seconds = int(record.worked_seconds or 0) if record else 0
+        ot_label = ""
+        ut_label = ""
+        if worked_seconds > 0:
+            reg_s = 8 * 3600
+            if worked_seconds > reg_s:
+                ot_label = f"{(worked_seconds - reg_s) // 3600}h {((worked_seconds - reg_s) % 3600) // 60:02d}m"
+            elif worked_seconds < reg_s:
+                ut_label = f"{(reg_s - worked_seconds) // 3600}h {((reg_s - worked_seconds) % 3600) // 60:02d}m"
+
         rows.append(
             {
                 "date": current_day.strftime("%B %-d, %Y") if os.name != "nt" else current_day.strftime("%B %#d, %Y"),
                 "day": current_day.strftime("%A"),
                 "timeIn": record.time_in.strftime("%-I:%M %p") if record and record.time_in and os.name != "nt" else (record.time_in.strftime("%#I:%M %p") if record and record.time_in else "--"),
                 "timeOut": record.time_out.strftime("%-I:%M %p") if record and record.time_out and os.name != "nt" else (record.time_out.strftime("%#I:%M %p") if record and record.time_out else "--"),
-                "hours": f"{int(record.worked_seconds or 0) // 3600}h {(int(record.worked_seconds or 0) % 3600) // 60:02d}m" if record else "--",
+                "hours": f"{worked_seconds // 3600}h {(worked_seconds % 3600) // 60:02d}m" if record else "--",
                 "status": (record.status.value.lower() if record else ("day-off" if current_day.weekday() >= 5 else "absent")),
+                "overtime": ot_label,
+                "undertime": ut_label,
             }
         )
         current_day += timedelta(days=1)
@@ -3369,9 +3381,15 @@ def attendance_monitoring(
             hours = worked_seconds // 3600
             minutes = (worked_seconds % 3600) // 60
             if worked_seconds > 0:
+                label = f"{hours}h {minutes:02d}m"
+                reg_s = 8 * 3600
+                if worked_seconds > reg_s:
+                    label += " (OT)"
+                elif worked_seconds < reg_s:
+                    label += " (UT)"
                 return {
                     "status": status_value,
-                    "label": f"{hours}h {minutes:02d}m",
+                    "label": label,
                     "pillClass": "pill-tan" if status_value == "late" else "pill-green",
                 }
             return {

@@ -1,4 +1,4 @@
-﻿(function () {
+(function () {
     function stripTime(value) {
         const d = new Date(value);
         d.setHours(0, 0, 0, 0);
@@ -331,7 +331,10 @@
                     '<td>' + (row.day || '--') + '</td>' +
                     '<td>' + (row.timeIn || '--') + '</td>' +
                     '<td>' + (row.timeOut || '--') + '</td>' +
-                    '<td>' + (row.hours || '--') + '</td>' +
+                    '<td>' + (row.hours || '--') + 
+                    (row.overtime ? '<br><small style="color: #059669; font-weight: 600;">+' + row.overtime + ' OT</small>' : '') +
+                    (row.undertime ? '<br><small style="color: #dc2626; font-weight: 600;">-' + row.undertime + ' UT</small>' : '') +
+                    '</td>' +
                     '<td><span class="pill ' + statusMeta.className + '">' + statusMeta.label + '</span></td>' +
                 '</tr>';
             }).join('');
