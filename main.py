@@ -27,6 +27,7 @@ from models import (
     AttendanceStatus,
     Department,
     EmploymentHistory,
+    LeaveApprovalStage,
     LeaveRequest,
     LeaveStatus,
     ProfileDocument,
@@ -484,10 +485,30 @@ def can_review_leave(current_user: User, leave_request: LeaveRequest) -> bool:
     if current_user.id == leave_request.requester_user_id:
         return False
 
+    if leave_request.status != LeaveStatus.pending:
+        return False
+
+    approval_stage = str(leave_request.approval_stage or LeaveApprovalStage.department_head.value)
     role = current_user.role
-    if role in {UserRole.hr_evaluator, UserRole.hr_head, UserRole.school_director, UserRole.department_head}:
-        return True
+    if approval_stage == LeaveApprovalStage.department_head.value:
+        return role == UserRole.department_head
+    if approval_stage == LeaveApprovalStage.hr.value:
+        return role in {UserRole.hr_evaluator, UserRole.hr_head}
     return False
+
+
+def leave_display_status(item: LeaveRequest) -> str:
+    if item.status == LeaveStatus.approved:
+        return LeaveStatus.approved.value
+    if item.status == LeaveStatus.rejected:
+        return LeaveStatus.rejected.value
+
+    approval_stage = str(item.approval_stage or LeaveApprovalStage.department_head.value)
+    if approval_stage == LeaveApprovalStage.hr.value:
+        return "Pending HR Review"
+    if approval_stage == LeaveApprovalStage.completed.value:
+        return "Pending Review"
+    return "Pending Dept Head Review"
 
 
 def can_review_position_request(current_user: User, position_request: PositionChangeRequest) -> bool:
@@ -514,6 +535,8 @@ def leave_to_payload(item: LeaveRequest) -> dict:
         "endDate": item.end_date.isoformat(),
         "numDays": item.num_days,
         "status": item.status.value,
+        "approvalStage": str(item.approval_stage or LeaveApprovalStage.department_head.value),
+        "displayStatus": leave_display_status(item),
         "reviewedBy": item.reviewed_by_name or "---",
         "reason": item.reason,
         "fileName": item.file_name or "No Document Attached",
@@ -781,6 +804,20 @@ def startup() -> None:
         with engine.begin() as connection:
             connection.exec_driver_sql("SELECT 1")
         Base.metadata.create_all(bind=engine)
+        with engine.begin() as connection:
+            column_exists = connection.exec_driver_sql(
+                """
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'leave_requests'
+                  AND column_name = 'approval_stage'
+                """
+            ).scalar_one()
+            if not column_exists:
+                connection.exec_driver_sql(
+                    "ALTER TABLE leave_requests ADD COLUMN approval_stage VARCHAR(40) NOT NULL DEFAULT 'department_head' AFTER status"
+                )
     except SQLAlchemyError as exc:
         raise RuntimeError(
             "Unable to connect to the database. Check DATABASE_URL, ensure MySQL is running, and create the hrers_project database before starting the app."
@@ -1353,11 +1390,12 @@ async def create_leave_request(
         end_date=end_date_val,
         num_days=num_days,
         status=LeaveStatus.pending,
+        approval_stage=LeaveApprovalStage.department_head.value,
         reason=reason,
         file_name=file_name,
         reviewed_by_user_id=None,
         reviewed_by_name=None,
-        review_remarks="Awaiting review.",
+        review_remarks="Awaiting Department Head review.",
     )
     db.add(leave_request)
     db.commit()
@@ -1390,6 +1428,10 @@ def list_leave_requests(
 
     if mode.lower() == "active":
         query = query.filter(LeaveRequest.status == LeaveStatus.pending)
+        if role == UserRole.department_head:
+            query = query.filter(LeaveRequest.approval_stage == LeaveApprovalStage.department_head.value)
+        elif role in {UserRole.hr_evaluator, UserRole.hr_head}:
+            query = query.filter(LeaveRequest.approval_stage == LeaveApprovalStage.hr.value)
     elif mode.lower() == "history":
         query = query.filter(LeaveRequest.status.in_([LeaveStatus.approved, LeaveStatus.rejected]))
 
@@ -1443,13 +1485,51 @@ async def decide_leave_request(
     if decision_raw not in {"approved", "rejected"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid decision")
 
-    item.status = LeaveStatus.approved if decision_raw == "approved" else LeaveStatus.rejected
-    item.reviewed_by_user_id = int(current_user.id)
-    item.reviewed_by_name = str(current_user.full_name)
-    item.review_remarks = remarks or f"{item.status.value} by {current_user.full_name} on {date.today().isoformat()}."
+    approval_stage = str(item.approval_stage or LeaveApprovalStage.department_head.value)
+    today_text = date.today().isoformat()
+
+    if approval_stage == LeaveApprovalStage.department_head.value:
+        if current_user.role != UserRole.department_head:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to review this request")
+
+        item.reviewed_by_user_id = int(current_user.id)
+        item.reviewed_by_name = str(current_user.full_name)
+        if decision_raw == "approved":
+            item.approval_stage = LeaveApprovalStage.hr.value
+            item.review_remarks = remarks or (
+                f"Approved by Department Head {current_user.full_name} on {today_text}. Awaiting HR review."
+            )
+            message = "Request forwarded to HR."
+        else:
+            item.status = LeaveStatus.rejected
+            item.approval_stage = LeaveApprovalStage.completed.value
+            item.review_remarks = remarks or f"Rejected by Department Head {current_user.full_name} on {today_text}."
+            message = "Request rejected."
+    elif approval_stage == LeaveApprovalStage.hr.value:
+        if current_user.role not in {UserRole.hr_evaluator, UserRole.hr_head}:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to review this request")
+
+        item.reviewed_by_user_id = int(current_user.id)
+        item.reviewed_by_name = str(current_user.full_name)
+        if decision_raw == "approved":
+            item.status = LeaveStatus.approved
+            item.approval_stage = LeaveApprovalStage.completed.value
+            item.review_remarks = remarks or f"Approved by HR {current_user.full_name} on {today_text}."
+            message = "Request approved."
+        else:
+            item.status = LeaveStatus.rejected
+            item.approval_stage = LeaveApprovalStage.completed.value
+            item.review_remarks = remarks or f"Rejected by HR {current_user.full_name} on {today_text}."
+            message = "Request rejected."
+    else:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to review this request")
+
+    if item.status == LeaveStatus.pending and item.approval_stage == LeaveApprovalStage.hr.value:
+        item.reviewed_by_user_id = int(current_user.id)
+        item.reviewed_by_name = str(current_user.full_name)
     db.commit()
     db.refresh(item)
-    return {"message": f"Request {item.status.value.lower()}.", "leave": leave_to_payload(item)}
+    return {"message": message, "leave": leave_to_payload(item)}
 
 
 @app.get("/accounts/get-user-data/{user_id}/")

@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS leave_requests (
     end_date DATE NOT NULL,
     num_days INT NOT NULL,
     status ENUM('Pending', 'Approved', 'Rejected') NOT NULL DEFAULT 'Pending',
+    approval_stage VARCHAR(40) NOT NULL DEFAULT 'department_head',
     reason TEXT NOT NULL,
     file_name VARCHAR(255) NULL,
     reviewed_by_user_id INT NULL,

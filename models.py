@@ -68,6 +68,12 @@ class LeaveStatus(str, Enum):
     rejected = "Rejected"
 
 
+class LeaveApprovalStage(str, Enum):
+    department_head = "department_head"
+    hr = "hr"
+    completed = "completed"
+
+
 class LeaveRequest(Base):
     __tablename__ = "leave_requests"
 
@@ -84,6 +90,7 @@ class LeaveRequest(Base):
         nullable=False,
         default=LeaveStatus.pending,
     )
+    approval_stage = Column(String(40), nullable=False, default=LeaveApprovalStage.department_head.value)
     reason = Column(Text, nullable=False)
     file_name = Column(String(255), nullable=True)
     reviewed_by_user_id = Column(Integer, nullable=True)
