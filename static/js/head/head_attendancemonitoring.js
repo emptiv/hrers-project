@@ -16,6 +16,34 @@
         return 1 + diffDays;
     }
 
+    function normalizeStatus(status) {
+        return String(status || '').toLowerCase().trim().replace(/\s+/g, '-');
+    }
+
+    function getStatusMeta(status, fallbackDate) {
+        const normalized = normalizeStatus(status);
+        const day = fallbackDate ? new Date(fallbackDate).getDay() : null;
+        const isWeekend = day === 0 || day === 6;
+
+        if (normalized === 'present') return { label: 'Present', className: 'pill-green' };
+        if (normalized === 'late') return { label: 'Late', className: 'pill-tan' };
+        if (normalized === 'active') return { label: 'Active', className: 'pill-green' };
+        if (normalized === 'leave') return { label: 'Leave', className: 'pill-purple' };
+        if (normalized === 'holiday') return { label: 'Holiday', className: 'pill-purple' };
+        if (normalized === 'absent') return { label: 'Absent', className: 'pill-red' };
+        if (normalized === 'day-off' || normalized === 'dayoff') return { label: 'Day Off', className: 'pill-neutral' };
+        if (normalized === 'none' || normalized === '') {
+            return isWeekend
+                ? { label: 'Day Off', className: 'pill-neutral' }
+                : { label: 'No Record', className: 'pill-neutral' };
+        }
+
+        return {
+            label: normalized.replace(/-/g, ' ').replace(/\b\w/g, function (char) { return char.toUpperCase(); }),
+            className: 'pill-neutral'
+        };
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
         const sidebar = document.getElementById('sidebar');
         const logoToggle = document.getElementById('logoToggle');
@@ -44,37 +72,53 @@
 
         const table = document.querySelector('.attendance-table');
         const tbody = table ? table.querySelector('tbody') : null;
+        const employeeModal = document.getElementById('employeeModal');
+        const closeModalBtn = employeeModal ? employeeModal.querySelector('.close-modal') : null;
+        const modalTableBody = document.getElementById('modalTableBody');
+        const weeklyViewBtn = document.getElementById('weeklyViewBtn');
+        const monthlyViewBtn = document.getElementById('monthlyViewBtn');
+        const dateRangeText = document.getElementById('dateRangeText');
+        const periodText = document.getElementById('periodText');
+        const totalHoursValue = document.getElementById('totalHoursValue');
+        const detID = document.getElementById('detID');
+        const modalEmployeeName = document.getElementById('modalEmployeeName');
+        const detPos = document.getElementById('detPos');
+        const detDept = document.getElementById('detDept');
+        const modalEmploymentType = employeeModal ? employeeModal.querySelector('.modal-sidebar .info-group:last-of-type span') : null;
 
         let weekOffset = 0;
         let weekStartDate = new Date();
         let monitoringRows = [];
+        let modalEmployeeId = null;
+        let modalView = 'weekly';
+        let modalOffset = 0;
         const filterState = { dept: 'All', status: 'All', date: null };
 
         const filterPopover = document.createElement('div');
         filterPopover.className = 'head-filter-popover';
         filterPopover.style.display = 'none';
-        filterPopover.innerHTML = '\\
-            <div class="head-filter-title">Filters</div>\\
-            <div class="head-filter-grid">\\
-                <label class="head-filter-label">Department</label>\\
-                <select id="hfDept" class="head-filter-select">\\
-                    <option>All</option>\\
-                </select>\\
-                <label class="head-filter-label">Status (Selected day)</label>\\
-                <select id="hfStatus" class="head-filter-select">\\
-                    <option>All</option>\\
-                    <option>Present</option>\\
-                    <option>Late</option>\\
-                    <option>Absent</option>\\
-                    <option>Leave</option>\\
-                    <option>Active</option>\\
-                </select>\\
-            </div>\\
-            <div class="head-filter-actions">\\
-                <button type="button" class="head-filter-btn head-filter-btn-ghost" id="hfClear">Clear</button>\\
-                <button type="button" class="head-filter-btn head-filter-btn-primary" id="hfApply">Apply</button>\\
-            </div>\\
-        ';
+        filterPopover.innerHTML = `
+            <div class="head-filter-title">Filters</div>
+            <div class="head-filter-grid">
+                <label class="head-filter-label">Department</label>
+                <select id="hfDept" class="head-filter-select">
+                    <option>All</option>
+                </select>
+                <label class="head-filter-label">Status (Selected day)</label>
+                <select id="hfStatus" class="head-filter-select">
+                    <option>All</option>
+                    <option>Present</option>
+                    <option>Late</option>
+                    <option>Absent</option>
+                    <option>Leave</option>
+                    <option>Active</option>
+                </select>
+            </div>
+            <div class="head-filter-actions">
+                <button type="button" class="head-filter-btn head-filter-btn-ghost" id="hfClear">Clear</button>
+                <button type="button" class="head-filter-btn head-filter-btn-primary" id="hfApply">Apply</button>
+            </div>
+        `;
 
         const controlsRow = document.querySelector('.controls-row');
         if (controlsRow) {
@@ -208,22 +252,24 @@
 
             monitoringRows.forEach(function (item) {
                 const tr = document.createElement('tr');
+                tr.dataset.employeeId = String(item.userId || '');
                 tr.dataset.dept = item.department || 'General';
                 tr.dataset.name = item.name || '';
                 tr.dataset.title = item.title || '';
                 tr.dataset.dayStatuses = (item.days || []).map(function (d) { return d.status || 'none'; }).join(',');
+                tr.style.cursor = 'pointer';
 
                 const employeeCell = document.createElement('td');
-                employeeCell.innerHTML = '\\
-                    <div class="user-cell">\\
-                        <div class="avatar"><i class="fas fa-user"></i></div>\\
-                        <div class="user-info">\\
-                            <span class="name">' + (item.name || '--') + '</span>\
-                            <span class="title">' + (item.title || 'Employee') + '</span>\
-                            <span class="dept-badge">' + (item.department || 'General') + '</span>\\
-                        </div>\\
-                    </div>\\
-                ';
+                employeeCell.innerHTML = `
+                    <div class="user-cell">
+                        <div class="avatar"><i class="fas fa-user"></i></div>
+                        <div class="user-info">
+                            <span class="name">${item.name || '--'}</span>
+                            <span class="title">${item.title || 'Employee'}</span>
+                            <span class="dept-badge">${item.department || 'General'}</span>
+                        </div>
+                    </div>
+                `;
                 tr.appendChild(employeeCell);
 
                 (item.days || []).forEach(function (day) {
@@ -233,10 +279,12 @@
                     dayNum.textContent = String(day.dayNum || '');
                     td.appendChild(dayNum);
 
-                    if (day.label) {
+                    const statusMeta = getStatusMeta(day.status, day.date);
+                    const pillLabel = day.label || statusMeta.label;
+                    if (pillLabel) {
                         const pill = document.createElement('div');
-                        pill.className = 'pill ' + (day.pillClass || 'pill-green');
-                        pill.textContent = day.label;
+                        pill.className = 'pill ' + (day.pillClass || statusMeta.className);
+                        pill.textContent = pillLabel;
                         td.appendChild(pill);
                     }
 
@@ -244,9 +292,93 @@
                 });
 
                 tbody.appendChild(tr);
+
+                tr.addEventListener('click', function () {
+                    openEmployeeModal(item);
+                });
             });
 
             applyFilters();
+        }
+
+        function showModal() {
+            if (employeeModal) employeeModal.style.display = 'block';
+        }
+
+        function hideModal() {
+            if (employeeModal) employeeModal.style.display = 'none';
+        }
+
+        function setModalEmployeeDetails(item) {
+            if (detID) detID.textContent = item.employeeNo || item.employeeId || '--';
+            if (modalEmployeeName) modalEmployeeName.textContent = item.fullName || item.name || '--';
+            if (detPos) detPos.textContent = item.position || item.title || '--';
+            if (detDept) detDept.textContent = item.department || 'General';
+            if (modalEmploymentType) modalEmploymentType.textContent = item.employmentType || '--';
+        }
+
+        function renderModalRows(rows) {
+            if (!modalTableBody) return;
+            if (!rows || !rows.length) {
+                modalTableBody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:1.5rem;">No attendance records found.</td></tr>';
+                return;
+            }
+
+            modalTableBody.innerHTML = rows.map(function (row) {
+                const statusMeta = getStatusMeta(row.status, row.date);
+                return '<tr>' +
+                    '<td>' + (row.date || '--') + '</td>' +
+                    '<td>' + (row.day || '--') + '</td>' +
+                    '<td>' + (row.timeIn || '--') + '</td>' +
+                    '<td>' + (row.timeOut || '--') + '</td>' +
+                    '<td>' + (row.hours || '--') + '</td>' +
+                    '<td><span class="pill ' + statusMeta.className + '">' + statusMeta.label + '</span></td>' +
+                '</tr>';
+            }).join('');
+        }
+
+        async function loadModalAttendance() {
+            if (!modalEmployeeId) return;
+            if (modalTableBody) {
+                modalTableBody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:1.5rem;">Loading attendance record...</td></tr>';
+            }
+
+            try {
+                const response = await fetch('/api/attendance/employee/' + encodeURIComponent(modalEmployeeId) + '?view=' + encodeURIComponent(modalView) + '&offset=' + encodeURIComponent(modalOffset));
+                if (!response.ok) {
+                    renderModalRows([]);
+                    if (dateRangeText) dateRangeText.textContent = '--';
+                    if (totalHoursValue) totalHoursValue.textContent = '0h 00m';
+                    if (periodText) periodText.textContent = modalView === 'monthly' ? 'Month' : 'Week';
+                    return;
+                }
+
+                const payload = await response.json();
+                if (payload.employee) setModalEmployeeDetails(payload.employee);
+                if (dateRangeText) dateRangeText.textContent = payload.label || '--';
+                if (periodText) periodText.textContent = payload.periodText || (modalView === 'monthly' ? 'Month' : 'Week');
+                if (totalHoursValue) totalHoursValue.textContent = payload.total || '0h 00m';
+                renderModalRows(payload.rows || []);
+            } catch (error) {
+                renderModalRows([]);
+            }
+        }
+
+        function openEmployeeModal(item) {
+            modalEmployeeId = item.userId || null;
+            modalView = 'weekly';
+            modalOffset = 0;
+            setModalEmployeeDetails({
+                employeeNo: item.employeeId,
+                fullName: item.name,
+                position: item.title,
+                department: item.department,
+                employmentType: 'Full-time'
+            });
+            if (weeklyViewBtn) weeklyViewBtn.classList.add('active');
+            if (monthlyViewBtn) monthlyViewBtn.classList.remove('active');
+            showModal();
+            loadModalAttendance();
         }
 
         function populateDepartmentOptions() {
@@ -367,6 +499,60 @@
             pagerNext.addEventListener('click', function () {
                 weekOffset -= 1;
                 loadWeekData();
+            });
+        }
+
+        if (closeModalBtn) {
+            closeModalBtn.addEventListener('click', hideModal);
+        }
+
+        if (employeeModal) {
+            employeeModal.addEventListener('click', function (e) {
+                if (e.target === employeeModal) hideModal();
+            });
+        }
+
+        if (weeklyViewBtn) {
+            weeklyViewBtn.addEventListener('click', function () {
+                if (!modalEmployeeId) return;
+                modalView = 'weekly';
+                modalOffset = 0;
+                weeklyViewBtn.classList.add('active');
+                if (monthlyViewBtn) monthlyViewBtn.classList.remove('active');
+                loadModalAttendance();
+            });
+        }
+
+        if (monthlyViewBtn) {
+            monthlyViewBtn.addEventListener('click', function () {
+                if (!modalEmployeeId) return;
+                modalView = 'monthly';
+                modalOffset = 0;
+                monthlyViewBtn.classList.add('active');
+                if (weeklyViewBtn) weeklyViewBtn.classList.remove('active');
+                loadModalAttendance();
+            });
+        }
+
+        const modalPager = employeeModal ? employeeModal.querySelector('.date-pager') : null;
+        const modalPagerPrev = modalPager ? modalPager.querySelector('.fa-chevron-left') : null;
+        const modalPagerNext = modalPager ? modalPager.querySelector('.fa-chevron-right') : null;
+
+        if (modalPagerPrev) {
+            modalPagerPrev.addEventListener('click', function () {
+                if (!modalEmployeeId) return;
+                modalOffset += 1;
+                loadModalAttendance();
+            });
+        }
+
+        if (modalPagerNext) {
+            modalPagerNext.addEventListener('click', function () {
+                if (!modalEmployeeId) return;
+                if (modalOffset > 0) {
+                    modalOffset -= 1;
+                    loadModalAttendance();
+                }
             });
         }
 

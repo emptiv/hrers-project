@@ -526,6 +526,14 @@ hr {
     min-width: 110px;
 }
 
+.attendance-table tbody tr {
+    cursor: pointer;
+}
+
+.attendance-table tbody tr:hover {
+    background: #faf7f7;
+}
+
 /* User cell */
 .user-cell { display: flex; align-items: center; gap: 12px; }
 
@@ -580,6 +588,7 @@ hr {
 .pill-tan    { background: #fef3c7; color: #92400e; }
 .pill-purple { background: #f3e8ff; color: #6b21a8; }
 .pill-red    { background: #fee2e2; color: #991b1b; }
+.pill-neutral { background: #e5e7eb; color: #374151; }
 
 
 /* --- 9. MODAL --- */

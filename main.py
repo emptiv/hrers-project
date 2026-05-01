@@ -282,6 +282,30 @@ def build_profile_payload(current_user: User, db: Session) -> dict[str, str | bo
     }
 
 
+def get_head_department_name(current_user: User, db: Session) -> str | None:
+    if current_user.role != UserRole.department_head:
+        return None
+
+    head_department = db.query(Department).filter(Department.head_user_id == int(current_user.id), Department.is_active == True).first()
+    return str(head_department.name) if head_department else None
+
+
+def get_user_department_name(user: User, db: Session) -> str:
+    latest_position = (
+        db.query(PositionChangeRequest)
+        .filter(PositionChangeRequest.requester_user_id == int(user.id))
+        .order_by(PositionChangeRequest.created_at.desc(), PositionChangeRequest.id.desc())
+        .first()
+    )
+
+    if user.role == UserRole.department_head:
+        head_department_name = get_head_department_name(user, db)
+        if head_department_name:
+            return head_department_name
+
+    return str((latest_position.current_department if latest_position else None) or "General")
+
+
 def build_employee_directory_payload(user: User, db: Session) -> dict:
     latest_position = (
         db.query(PositionChangeRequest)
@@ -647,6 +671,98 @@ def build_monthly_attendance_summary(records: list[AttendanceRecord], offset: in
         "daysInMonth": days_in_month,
         "attendance": attendance_map,
         "total": f"{total_seconds // 3600}h {(total_seconds % 3600) // 60:02d}m",
+    }
+
+
+def format_attendance_duration(seconds: int) -> str:
+    return f"{seconds // 3600}h {(seconds % 3600) // 60:02d}m"
+
+
+def format_attendance_time(value: datetime | None) -> str:
+    if not value:
+        return "--"
+    return value.strftime("%-I:%M %p") if os.name != "nt" else value.strftime("%#I:%M %p")
+
+
+def format_attendance_date(value: date) -> str:
+    return value.strftime("%B %-d, %Y") if os.name != "nt" else value.strftime("%B %#d, %Y")
+
+
+def build_attendance_period_rows(records: list[AttendanceRecord], start_date: date, end_date: date) -> tuple[list[dict[str, str]], int]:
+    record_by_date = {record.record_date: record for record in records if start_date <= record.record_date <= end_date}
+    rows: list[dict[str, str]] = []
+    total_seconds = 0
+    today = date.today()
+
+    current_day = start_date
+    while current_day <= end_date:
+        record = record_by_date.get(current_day)
+        if record:
+            worked_seconds = int(record.worked_seconds or 0)
+            total_seconds += worked_seconds
+            status_value = record.status.value.lower()
+            if record.time_in and not record.time_out and current_day == today:
+                status_value = "active"
+            rows.append(
+                {
+                    "date": format_attendance_date(current_day),
+                    "day": current_day.strftime("%A"),
+                    "timeIn": format_attendance_time(record.time_in),
+                    "timeOut": format_attendance_time(record.time_out),
+                    "hours": format_attendance_duration(worked_seconds) if worked_seconds else "Present",
+                    "status": status_value,
+                }
+            )
+        else:
+            rows.append(
+                {
+                    "date": format_attendance_date(current_day),
+                    "day": current_day.strftime("%A"),
+                    "timeIn": "--",
+                    "timeOut": "--",
+                    "hours": "--",
+                    "status": "day-off" if current_day.weekday() >= 5 else "absent",
+                }
+            )
+        current_day += timedelta(days=1)
+
+    return rows, total_seconds
+
+
+def build_employee_attendance_period_payload(records: list[AttendanceRecord], view: str, offset: int) -> dict[str, object]:
+    view_key = view.strip().lower()
+    safe_offset = max(0, offset)
+    today = date.today()
+
+    if view_key == "monthly":
+        month_index = today.month - 1 - safe_offset
+        year = today.year + (month_index // 12)
+        month = (month_index % 12) + 1
+        start_date = date(year, month, 1)
+        if month == 12:
+            next_month = date(year + 1, 1, 1)
+        else:
+            next_month = date(year, month + 1, 1)
+        end_date = next_month - timedelta(days=1)
+        rows, total_seconds = build_attendance_period_rows(records, start_date, end_date)
+        return {
+            "view": "monthly",
+            "label": start_date.strftime("%B %Y"),
+            "periodText": "Month",
+            "rows": rows,
+            "total": format_attendance_duration(total_seconds),
+        }
+
+    days_since_sunday = (today.weekday() + 1) % 7
+    start_date = today - timedelta(days=days_since_sunday + (safe_offset * 7))
+    end_date = start_date + timedelta(days=6)
+    rows, total_seconds = build_attendance_period_rows(records, start_date, end_date)
+    return {
+        "view": "weekly",
+        "label": f"{start_date.strftime('%B %-d') if os.name != 'nt' else start_date.strftime('%B %#d')} – {end_date.strftime('%B %-d, %Y') if os.name != 'nt' else end_date.strftime('%B %#d, %Y')}",
+        "periodText": "Week",
+        "rows": rows,
+        "total": format_attendance_duration(total_seconds),
     }
 
 cors_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").split(",") if origin.strip()]
@@ -3102,6 +3218,38 @@ def attendance_summary(
     return build_weekly_attendance_summary(records, max(0, offset))
 
 
+@app.get("/api/attendance/employee/{employee_id}")
+def get_employee_attendance_details(
+    employee_id: int,
+    view: str = "weekly",
+    offset: int = 0,
+    current_user: User = Depends(require_roles(UserRole.hr_evaluator, UserRole.hr_head, UserRole.department_head, UserRole.school_director, UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    employee = db.query(User).filter(User.id == employee_id, User.role == UserRole.employee).first()
+    if not employee:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+
+    if current_user.role == UserRole.department_head:
+        head_department_name = get_head_department_name(current_user, db)
+        if not head_department_name:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
+        employee_department = get_user_department_name(employee, db)
+        if employee_department != head_department_name:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
+
+    records = (
+        db.query(AttendanceRecord)
+        .filter(AttendanceRecord.user_id == int(employee.id))
+        .order_by(AttendanceRecord.record_date.asc())
+        .all()
+    )
+
+    payload = build_employee_attendance_period_payload(records, view, offset)
+    payload["employee"] = build_employee_detail_payload(employee, db)
+    return payload
+
+
 @app.get("/api/attendance/monitoring")
 def attendance_monitoring(
     offset: int = 0,
@@ -3115,9 +3263,28 @@ def attendance_monitoring(
     week_start = current_week_start - timedelta(days=safe_offset * 7)
     week_end = week_start + timedelta(days=6)
 
-    employees = (
+    employees = db.query(User).filter(User.role == UserRole.employee)
+
+    if current_user.role == UserRole.department_head:
+        head_department_name = get_head_department_name(current_user, db)
+        if not head_department_name:
+            return {
+                "weekOffset": safe_offset,
+                "weekStart": week_start.isoformat(),
+                "weekEnd": week_end.isoformat(),
+                "weekLabel": f"{week_start.strftime('%b')} {week_start.day} - {week_end.strftime('%b')} {week_end.day}, {week_end.year}",
+                "rows": [],
+            }
+
+        employees = [
+            user
+            for user in employees.order_by(User.full_name.asc()).all()
+            if get_user_department_name(user, db) == head_department_name
+        ]
+    else:
+        employees = (
         db.query(User)
-        .filter(User.role == UserRole.employee, User.is_active == True)
+        .filter(User.role == UserRole.employee)
         .order_by(User.full_name.asc())
         .all()
     )
