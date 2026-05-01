@@ -4,157 +4,231 @@ document.addEventListener('DOMContentLoaded', () => {
     const closeBtn = document.getElementById('closeBtn');
     const menuItems = document.querySelectorAll('.menu-item');
 
-    // 1. Tooltip Fix: Automatically set labels
-    menuItems.forEach(item => {
+    menuItems.forEach((item) => {
         const span = item.querySelector('span');
         if (span) {
             item.setAttribute('data-text', span.innerText.trim());
         }
     });
 
-    // 2. Sidebar Toggle Logic
-    if (logoToggle) {
+    if (logoToggle && sidebar) {
         logoToggle.onclick = () => sidebar.classList.toggle('close');
     }
-    if (closeBtn) {
+
+    if (closeBtn && sidebar) {
         closeBtn.onclick = () => sidebar.classList.add('close');
     }
 
-    // 3. Tabs Logic
     const tabs = document.querySelectorAll('.tab');
     const tabContents = document.querySelectorAll('.tab-content-item');
-    tabs.forEach(tab => {
+
+    tabs.forEach((tab) => {
         tab.addEventListener('click', () => {
-            tabs.forEach(t => t.classList.remove('active'));
+            tabs.forEach((currentTab) => currentTab.classList.remove('active'));
             tab.classList.add('active');
-            tabContents.forEach(c => c.classList.remove('active'));
+            tabContents.forEach((content) => content.classList.remove('active'));
+
             const targetId = tab.getAttribute('data-tab');
             const targetContent = document.getElementById(targetId);
-            if (targetContent) targetContent.classList.add('active');
+            if (targetContent) {
+                targetContent.classList.add('active');
+            }
         });
     });
 
-    const params = new URLSearchParams(window.location.search);
-    const employeeId = params.get('employee_id') || params.get('id');
+    function getQueryParam(name) {
+        return new URLSearchParams(window.location.search).get(name);
+    }
 
-    async function loadEmployeeDetail() {
-        if (!employeeId) {
+    function normalizeText(value) {
+        return (value || '').toString().trim();
+    }
+
+    function escapeHtml(value) {
+        return (value || '')
+            .toString()
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#39;');
+    }
+
+    function setText(selector, value) {
+        const element = document.querySelector(selector);
+        if (element) {
+            element.textContent = value || '--';
+        }
+    }
+
+    function renderDepartment(profile) {
+        const departmentInfo = profile.departmentInfo || {};
+        const departmentName = departmentInfo.name || profile.department || '--';
+
+        setText('#departmentName', departmentName);
+        setText('#departmentId', departmentInfo.id ? String(departmentInfo.id) : '--');
+        setText('#departmentLocation', departmentInfo.location || '--');
+        setText('#departmentEmail', departmentInfo.email || '--');
+        setText('#departmentHead', departmentInfo.headName || '--');
+    }
+
+    function renderDocuments(profile) {
+        const docHeader = document.getElementById('documentHeader');
+        const tbody = document.querySelector('.doc-table tbody');
+        const documents = Array.isArray(profile.documents) ? profile.documents : [];
+
+        if (!tbody) {
+            return;
+        }
+
+        if (docHeader) {
+            docHeader.textContent = documents.length
+                ? `${documents.length} document(s) available`
+                : 'No documents uploaded yet';
+        }
+
+        if (!documents.length) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="5" style="text-align:center; padding:2rem; color:#777;">No documents uploaded yet.</td>
+                </tr>
+            `;
+            return;
+        }
+
+        tbody.innerHTML = documents.map((doc) => {
+            const status = normalizeText(doc.status || 'Submitted');
+            const statusClass = status.toLowerCase() === 'approved'
+                ? 'valid'
+                : (status.toLowerCase() === 'rejected' ? 'missing' : 'update');
+            const viewUrl = doc.url ? `${doc.url}?mode=inline` : '';
+
+            return `
+                <tr>
+                    <td>${escapeHtml(doc.name || 'Document')}</td>
+                    <td>${escapeHtml(doc.type || 'FILE')}</td>
+                    <td class="${statusClass}">${escapeHtml(status)}</td>
+                    <td>${escapeHtml(doc.dateUploaded || '--')}</td>
+                    <td class="actions">
+                        ${viewUrl ? `<a href="${escapeHtml(viewUrl)}" target="_blank" rel="noopener noreferrer" title="View"><i class="fas fa-eye action-icon"></i></a>` : '--'}
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    function renderHistory(profile) {
+        const timeline = document.getElementById('timelineContainer');
+        const history = Array.isArray(profile.history) ? profile.history : [];
+
+        if (!timeline) {
+            return;
+        }
+
+        if (!history.length) {
+            timeline.innerHTML = `
+                <div class="timeline-item">
+                    <div class="timeline-date">--</div>
+                    <div class="timeline-content">
+                        <h4>No history available</h4>
+                        <p>Employment history has not been recorded yet.</p>
+                    </div>
+                </div>
+            `;
+            return;
+        }
+
+        timeline.innerHTML = history.map((item) => `
+            <div class="timeline-item">
+                <div class="timeline-date">${escapeHtml(item.date || '--')}</div>
+                <div class="timeline-content">
+                    <h4>${escapeHtml(item.title || 'History Event')}</h4>
+                    <p>${escapeHtml(item.description || '--')}</p>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function populate(profile) {
+        if (!profile) {
+            return;
+        }
+
+        const role = normalizeText(profile.position || profile.roleLabel || profile.role || 'Employee');
+
+        setText('#employeeName', profile.fullName || profile.name || '--');
+        setText('#employeeRole', role);
+
+        const empId = document.querySelector('.employee-id');
+        if (empId) {
+            empId.textContent = `Employee ID: ${profile.employeeNo || profile.id || '--'}`;
+        }
+
+        const details = document.querySelectorAll('.employment-details p');
+        if (details[0]) {
+            details[0].innerHTML = `<strong>Status</strong> <span class="status-dot" style="background:${profile.isActive ? '#8ddf9b' : '#ccc'}"></span> ${profile.isActive ? 'Active' : 'Inactive'}`;
+        }
+        if (details[1]) {
+            details[1].innerHTML = `<strong>Position</strong> ${escapeHtml(role)}`;
+        }
+        if (details[2]) {
+            details[2].innerHTML = `<strong>Department</strong> ${escapeHtml((profile.departmentInfo && profile.departmentInfo.name) || profile.department || '--')}`;
+        }
+        if (details[3]) {
+            details[3].innerHTML = `<strong>Employment Type</strong> ${escapeHtml(profile.employmentType || '--')}`;
+        }
+        if (details[4]) {
+            details[4].innerHTML = `<strong>Date Hired</strong> ${escapeHtml(profile.dateHired || '--')}`;
+        }
+
+        const contact = document.querySelectorAll('.contact-info p');
+        if (contact[0]) {
+            contact[0].innerHTML = `<i class="fas fa-envelope"></i> ${escapeHtml(profile.email || '--')}`;
+        }
+        if (contact[1]) {
+            contact[1].innerHTML = `<i class="fas fa-phone"></i> ${escapeHtml(profile.contactNumber || '--')}`;
+        }
+        if (contact[2]) {
+            contact[2].innerHTML = `<i class="fas fa-location-dot"></i> ${escapeHtml(profile.address || '--')}`;
+        }
+
+        renderDepartment(profile);
+        renderDocuments(profile);
+        renderHistory(profile);
+    }
+
+    async function load() {
+        const id = getQueryParam('employee_id') || getQueryParam('id');
+        if (!id) {
             return;
         }
 
         try {
-            const response = await fetch(`/api/employees/${encodeURIComponent(employeeId)}`);
-            if (!response.ok) return;
+            const [employeeResponse, documentsResponse] = await Promise.all([
+                fetch(`/api/employees/${encodeURIComponent(id)}`),
+                fetch(`/api/profile/documents?user_id=${encodeURIComponent(id)}`),
+            ]);
 
-            const profile = await response.json();
-            const nameEl = document.querySelector('.profile-info h2');
-            const roleEl = document.querySelector('.profile-info .role');
-            const employeeIdEl = document.querySelector('.profile-info .employee-id');
-
-            if (nameEl) nameEl.textContent = profile.fullName || '--';
-            if (roleEl) roleEl.textContent = profile.position || profile.roleLabel || '--';
-            if (employeeIdEl) employeeIdEl.textContent = `Employee ID: ${profile.employeeNo || profile.id || '--'}`;
-
-            const details = document.querySelectorAll('.employment-details p');
-            if (details[0]) details[0].innerHTML = `<strong>Status</strong> <span class="status-dot" style="background:${profile.isActive ? '#8ddf9b' : '#f08d8d'}"></span> ${profile.isActive ? 'Active' : 'Inactive'}`;
-            if (details[1]) details[1].innerHTML = `<strong>Position</strong> ${profile.position || '--'}`;
-            if (details[2]) details[2].innerHTML = `<strong>Department</strong> ${profile.department || '--'}`;
-            if (details[3]) details[3].innerHTML = `<strong>Employment Type</strong> ${profile.employmentType || '--'}`;
-            if (details[4]) details[4].innerHTML = `<strong>Date Hired</strong> ${profile.dateHired || '--'}`;
-
-            const contactLines = document.querySelectorAll('.contact-info p');
-            if (contactLines[0]) contactLines[0].innerHTML = `<i class="fas fa-envelope"></i> ${profile.email || '--'}`;
-            if (contactLines[1]) contactLines[1].innerHTML = `<i class="fas fa-phone"></i> ${profile.contactNumber || '--'}`;
-            if (contactLines[2]) contactLines[2].innerHTML = `<i class="fas fa-location-dot"></i> ${profile.address || '--'}`;
-
-            const departmentRows = document.querySelectorAll('.info-row');
-            if (departmentRows[0]) departmentRows[0].querySelectorAll('span')[1].textContent = profile.department || '--';
-            if (departmentRows[1]) departmentRows[1].querySelectorAll('span')[1].textContent = '--';
-            if (departmentRows[2]) departmentRows[2].querySelectorAll('span')[1].textContent = '--';
-            if (departmentRows[3]) departmentRows[3].querySelectorAll('span')[1].textContent = '--';
-            if (departmentRows[4]) departmentRows[4].querySelectorAll('span')[1].textContent = '--';
-
-            const timeline = document.getElementById('timelineContainer');
-            if (timeline) {
-                timeline.innerHTML = '<div class="timeline-item"><div class="timeline-date">--</div><div class="timeline-content"><h4>No history available</h4><p>Employment history has not been recorded yet.</p></div></div>';
+            if (!employeeResponse.ok) {
+                throw new Error('Failed to load employee details');
             }
 
-            const docTable = document.querySelector('.doc-table tbody');
-            if (docTable) {
-                docTable.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:2rem;">No document records in database.</td></tr>';
+            const data = await employeeResponse.json();
+
+            if (documentsResponse.ok) {
+                const documentsPayload = await documentsResponse.json();
+                data.documents = Array.isArray(documentsPayload.documents) ? documentsPayload.documents : [];
             }
 
-            const profileImg = document.querySelector('.profile-img');
-            if (profileImg) profileImg.alt = profile.fullName || 'Employee photo';
+            populate(data);
         } catch (error) {
+            console.error(error);
+            const docHeader = document.getElementById('documentHeader');
+            if (docHeader) {
+                docHeader.textContent = 'Unable to load employee records';
+            }
         }
     }
 
-    function isPlaceholderHref(hrefValue) {
-        if (!hrefValue) return true;
-        const normalized = hrefValue.trim().toLowerCase();
-        return normalized === '#' || normalized === 'javascript:void(0)' || normalized === 'javascript:;';
-    }
-
-    function showFileUnavailableMessage(docName) {
-        const message = `No uploaded file is available yet for "${docName}".`;
-        if (window.Swal && typeof window.Swal.fire === 'function') {
-            window.Swal.fire({
-                icon: 'info',
-                title: 'File Unavailable',
-                text: message,
-                confirmButtonColor: '#4a1d1d',
-            });
-            return;
-        }
-        const toast = document.createElement('div');
-        toast.style.position = 'fixed';
-        toast.style.top = '20px';
-        toast.style.right = '20px';
-        toast.style.zIndex = '9999';
-        toast.style.background = '#4a1d1d';
-        toast.style.color = '#fff';
-        toast.style.padding = '10px 14px';
-        toast.style.borderRadius = '8px';
-        toast.style.fontSize = '0.9rem';
-        toast.textContent = message;
-        document.body.appendChild(toast);
-        setTimeout(function () {
-            toast.remove();
-        }, 2200);
-    }
-
-    const actionCells = document.querySelectorAll('.action-cell');
-    actionCells.forEach(cell => {
-        const links = cell.querySelectorAll('a');
-        
-        links.forEach(link => {
-            link.addEventListener('click', (e) => {
-                const isDownload = link.hasAttribute('download') || link.querySelector('.fa-download');
-                const isView = link.querySelector('.fa-eye');
-                
-                // Get document details from the current row.
-                const row = link.closest('tr');
-                const docName = row ? row.cells[0].innerText.trim() : "Document";
-                const href = link.getAttribute('href') || '';
-                const isPlaceholderLink = isPlaceholderHref(href);
-
-                if (isDownload) {
-                    if (isPlaceholderLink) {
-                        e.preventDefault();
-                        showFileUnavailableMessage(docName);
-                    }
-                } 
-                
-                else if (isView) {
-                    if (isPlaceholderLink) {
-                        e.preventDefault();
-                        showFileUnavailableMessage(docName);
-                    }
-                }
-            });
-        });
-    });
-
-    loadEmployeeDetail();
+    load();
 });

@@ -44,12 +44,6 @@
             </li>
             <hr>
             <li>
-                <a href="head_appmanagement.html" class="menu-item">
-                    <i class="fas fa-file"></i>
-                    <span>Application Management</span>
-                </a>
-            </li>
-            <li>
                 <a href="head_employeelist.html" class="menu-item">
                     <i class="fas fa-database"></i>
                     <span>Employee Records</span>
@@ -67,12 +61,7 @@
                     <span>Leave Management</span>
                 </a>
             </li>
-            <li>
-                <a href="#" class="menu-item">
-                    <i class="fas fa-star"></i>
-                    <span>Performance Evaluation</span>
-                </a>
-            </li>
+            
             <li>
                 <a href="head_training.html" class="menu-item">
                     <i class="fas fa-chalkboard-teacher"></i>
@@ -134,8 +123,6 @@
                 </div>
                 <div class="action-buttons">
                     <button class="btn-action"><i class="fas fa-filter"></i> Filter</button>
-                    <button class="btn-action"><i class="fas fa-calendar-alt"></i> Select Date</button>
-                    <input id="sampleDateInput" type="date" class="head-hidden-date" aria-hidden="true" tabindex="-1">
                     <div class="pagination">
                         <i class="fas fa-chevron-left"></i>
                         <span>Current Week</span>
@@ -198,6 +185,7 @@
                             </thead>
                             <tbody id="modalTableBody"></tbody>
                         </table>
+                        <div class="monthly-grid" id="modalMonthlyGrid" style="display: none;"></div>
                     </div>
                 </div>
                 <div class="modal-side-column">
@@ -218,6 +206,7 @@
         </div>
     </div>
 
-    <script src="../../static/js/attendance/head_attendancemonitoring.js"></script>
+    <script src="../../static/js/head/head_attendancemonitoring.js"></script>
 </body>
 </html>
+

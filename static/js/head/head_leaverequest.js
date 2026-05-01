@@ -45,13 +45,14 @@ function renderHeadTable() {
     leaveItems.forEach((leave) => {
         const clone = template.content.cloneNode(true);
         const statusClass = leave.status.toLowerCase().replace(/\s+/g, '-');
+        const displayStatus = leave.displayStatus || leave.status;
 
         clone.querySelector('.col-emp').innerHTML = `<strong>${leave.name}</strong><br><small>${leave.role}</small>`;
         clone.querySelector('.col-type').innerText = leave.leaveType;
         clone.querySelector('.col-start').innerText = leave.startDate;
         clone.querySelector('.col-end').innerText = leave.endDate;
         clone.querySelector('.col-days').innerText = leave.numDays;
-        clone.querySelector('.col-status').innerHTML = `<span class="status-pill ${statusClass}">${leave.status}</span>`;
+        clone.querySelector('.col-status').innerHTML = `<span class="status-pill ${statusClass}">${displayStatus}</span>`;
         clone.querySelector('.col-reviewer').innerText = leave.reviewedBy || '---';
         clone.querySelector('.action-link').onclick = () => openHeadModal(leave.id);
         body.appendChild(clone);
@@ -64,15 +65,17 @@ function openHeadModal(id) {
     if (!data) return;
 
     const isFinal = (data.status === "Approved" || data.status === "Rejected");
+    const canReview = Boolean(data.canReview);
     const statusClass = data.status.toLowerCase().replace(/\s+/g, '-');
+    const displayStatus = data.displayStatus || data.status;
 
     document.getElementById('modalFileName').innerText = data.fileName;
     document.getElementById('modalSubmitDate').innerText = `${data.dateFiled} at ${data.submitTime}`;
     document.getElementById('modalReason').innerText = data.reason;
-    document.getElementById('modalRemarks').innerText = data.reviewRemarks;
-    document.getElementById('modalStatusContainer').innerHTML = `<span class="status-pill ${statusClass}">${data.status}</span>`;
+    document.getElementById('modalRemarks').innerText = data.reviewRemarks || 'Awaiting Department Head review.';
+    document.getElementById('modalStatusContainer').innerHTML = `<span class="status-pill ${statusClass}">${displayStatus}</span>`;
     document.getElementById('modalReviewerText').innerHTML = `<small>Reviewed by: ${data.reviewedBy}</small>`;
-    document.getElementById('modalActions').style.display = isFinal ? "none" : "flex";
+    document.getElementById('modalActions').style.display = (!isFinal && canReview) ? "flex" : "none";
     document.getElementById('viewModal').style.display = 'flex';
 }
 

@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS position_change_requests (
     effective_date DATE NOT NULL,
     reason TEXT NOT NULL,
     status ENUM('Pending', 'Approved', 'Rejected') NOT NULL DEFAULT 'Pending',
+    approval_stage VARCHAR(40) NOT NULL DEFAULT 'hr_evaluator',
     reviewed_by_user_id INT NULL,
     reviewed_by_name VARCHAR(150) NULL,
     review_remarks TEXT NULL,

@@ -9,7 +9,7 @@ let activeAppId = null;
 let activeAppFilter = '';
 let activeAppFilterLabel = '';
 let activeDocPage = 1;
-let activeMainTab = 'new';
+let activeMainTab = 'position';
 
 let appData = [];
 let positionChangeData = [];
@@ -77,8 +77,45 @@ function mapStatusForSd(status) {
     return 'pending-sd';
 }
 
+function mapLeaveStageForSd(item) {
+    var status = (item.status || '').toLowerCase();
+    if (status === 'approved' || status === 'rejected') {
+        return status;
+    }
+
+    var stage = (item.approvalStage || '').toLowerCase();
+    if (stage === 'school_director') {
+        return 'pending-sd';
+    }
+    if (stage === 'hr_head') {
+        return 'pending-hrhead';
+    }
+    if (stage === 'hr') {
+        return 'pending-hr';
+    }
+    return 'pending-head';
+}
+
+function getLeaveStageLabel(status) {
+    var labels = {
+        'pending-head': 'Pending - Dept. Head',
+        'pending-hr': 'Pending - HR Evaluator',
+        'pending-hrhead': 'Pending - HR Head',
+        'pending-sd': 'Pending - SD',
+        approved: 'Approved',
+        rejected: 'Rejected'
+    };
+    return labels[status] || 'Pending';
+}
+
 function mapLeaveToApp(item) {
-    var normalizedStatus = mapStatusForSd((item.status || '').toLowerCase());
+    var normalizedStatus = mapLeaveStageForSd(item);
+    var displayStatus = item.displayStatus || getLeaveStageLabel(normalizedStatus);
+    var pendingWith = normalizedStatus === 'pending-head'
+        ? 'Department Head'
+        : (normalizedStatus === 'pending-hr'
+            ? 'HR Evaluator'
+            : (normalizedStatus === 'pending-hrhead' ? 'HR Head' : (normalizedStatus === 'pending-sd' ? 'School Director' : 'Completed')));
     return {
         id: 'LR-' + item.id,
         sourceType: 'leave',
@@ -91,23 +128,51 @@ function mapLeaveToApp(item) {
         position: item.leaveType || 'Leave Request',
         applyingFor: item.leaveType || 'Leave Request',
         submitted: item.dateFiled || '---',
-        progress: normalizedStatus === 'pending-sd' ? 'In Review' : 'Completed',
+        progress: normalizedStatus.indexOf('pending-') === 0 ? 'In Review' : 'Completed',
         status: normalizedStatus,
-        statusLabel: normalizedStatus === 'pending-sd' ? 'Pending - SD' : (normalizedStatus === 'approved' ? 'Approved' : 'Rejected'),
+        statusLabel: displayStatus,
         reviewedBy: item.reviewedBy || '---',
         headReviewedBy: item.reviewedBy || '---',
         headReviewedAt: item.submitTime || '---',
         finalReviewedBy: item.reviewedBy || '---',
         finalReviewedAt: item.submitTime || '---',
-        pendingWith: normalizedStatus === 'pending-sd' ? 'School Director' : 'Completed',
-        remarks: item.reviewRemarks || 'Awaiting review.',
+        pendingWith: pendingWith,
+        remarks: item.reviewRemarks || (displayStatus.indexOf('Pending') === 0 ? displayStatus : 'Awaiting review.'),
         headRemarks: item.reason || '---',
         fileName: item.fileName || 'No Document Attached'
     };
 }
 
+// Map a position change request from the API into a display object for School Director.
+// Stage progression: hr_evaluator → hr_head → school_director → completed
+function mapPositionStageForSd(item) {
+    var status = (item.status || '').toLowerCase();
+    if (status === 'approved') return 'approved';
+    if (status === 'rejected') return 'rejected';
+
+    var stage = (item.approvalStage || '').toLowerCase();
+    if (stage === 'hr_evaluator')    return 'pending-hr-evaluator';
+    if (stage === 'hr_head')         return 'pending-hr-head';
+    if (stage === 'school_director') return 'pending-sd';
+    return 'pending-hr-evaluator'; // default
+}
+
+function getPositionStageLabelForSd(normalizedStatus) {
+    var labels = {
+        'pending-hr-evaluator': 'Pending - HR Evaluator',
+        'pending-hr-head':      'Pending - HR Head',
+        'pending-sd':           'Pending - School Director',
+        'approved':             'Approved',
+        'rejected':             'Rejected'
+    };
+    return labels[normalizedStatus] || 'Pending';
+}
+
 function mapPositionToApp(item) {
-    var normalizedStatus = mapStatusForSd((item.status || '').toLowerCase());
+    var normalizedStatus = mapPositionStageForSd(item);
+    var statusLabel = getPositionStageLabelForSd(normalizedStatus);
+    // School Director can only act when the request is at the school_director stage
+    var canAct = normalizedStatus === 'pending-sd';
     return {
         id: 'PCR-' + item.id,
         sourceType: 'position',
@@ -119,29 +184,21 @@ function mapPositionToApp(item) {
         requestedPos: item.requestedPosition || '--',
         reason: item.reason || '--',
         submitted: item.submittedAt ? new Date(item.submittedAt).toLocaleDateString() : '---',
-        progress: normalizedStatus === 'pending-sd' ? 'In Review' : 'Completed',
+        progress: canAct ? 'In Review' : (normalizedStatus === 'approved' || normalizedStatus === 'rejected' ? 'Completed' : 'Awaiting Next Stage'),
         status: normalizedStatus,
-        statusLabel: normalizedStatus === 'pending-sd' ? 'Pending - SD' : (normalizedStatus === 'approved' ? 'Approved' : 'Rejected'),
+        statusLabel: statusLabel,
         reviewedBy: item.reviewedBy || '---',
         hrReviewedBy: item.reviewedBy || '---',
         hrReviewedAt: item.submittedAt ? new Date(item.submittedAt).toLocaleDateString() : '---',
         remarks: item.reviewRemarks || 'Awaiting review.',
         headRemarks: item.reviewRemarks || '---',
-        fileName: 'Position_Change_' + item.id + '.pdf'
+        fileName: 'Position_Change_' + item.id + '.pdf',
+        _canAct: canAct
     };
 }
 
 async function refreshAppManagementData() {
-    try {
-        var leaveResponse = await fetch('/api/leave-requests?mode=all');
-        if (leaveResponse.ok) {
-            var leavePayload = await leaveResponse.json();
-            appData = (leavePayload.items || []).map(mapLeaveToApp);
-        }
-    } catch (error) {
-        appData = [];
-    }
-
+    // New Employee Applications (Leave Requests) removed.
     try {
         var positionResponse = await fetch('/api/position-requests?mode=all');
         if (positionResponse.ok) {
@@ -158,8 +215,14 @@ function isFinalStatus(status) {
     return status === 'approved' || status === 'rejected';
 }
 
+// For leave requests SD_STAGE is 'pending-sd'. For position requests, we use _canAct flag instead.
 function canActOnApp(status) {
     return status === SD_STAGE;
+}
+
+// Determine if the School Director can act on a position change record
+function canActOnPositionRecord(app) {
+    return !!(app && app._canAct);
 }
 
 function findRecordById(id) {
@@ -326,17 +389,17 @@ function clearAppFilter() {
 }
 
 function setMainTab(tabName) {
-    var tabNew = document.getElementById('tab-new');
     var tabPosition = document.getElementById('tab-position');
+    var logBtn = document.getElementById('openPositionRequestBtn');
 
-    activeMainTab = tabName === 'position' ? 'position' : 'new';
+    activeMainTab = 'position'; // Always position now
 
-    if (activeMainTab === 'position') {
+    if (tabPosition) {
         tabPosition.classList.add('active');
-        tabNew.classList.remove('active');
-    } else {
-        tabNew.classList.add('active');
-        tabPosition.classList.remove('active');
+    }
+    if (logBtn) {
+        logBtn.hidden = false;
+        logBtn.style.display = 'inline-flex';
     }
 
     updateTableHeaders();
@@ -389,9 +452,10 @@ function renderRows(rows) {
     }
 
     rows.forEach(function (app) {
-        const clone   = template.content.cloneNode(true);
-        const isFinal = isFinalStatus(app.status);
-        const canAct  = canActOnApp(app.status);
+        const clone      = template.content.cloneNode(true);
+        const isFinal    = isFinalStatus(app.status);
+        // For position records use the _canAct flag; for leave records use canActOnApp
+        const canAct     = isPositionChangeRecord(app) ? canActOnPositionRecord(app) : canActOnApp(app.status);
 
         clone.querySelector('.col-id').innerText   = app.id;
         clone.querySelector('.col-name').innerText = app.name;
@@ -408,7 +472,7 @@ function renderRows(rows) {
             clone.querySelector('.col-progress').innerText  = app.progress;
         }
 
-        clone.querySelector('.col-status').innerHTML    =
+        clone.querySelector('.col-status').innerHTML =
             '<span class="status-pill ' + app.status + '">' + app.statusLabel + '</span>';
 
         const actionsCell = clone.querySelector('.col-actions');
@@ -443,7 +507,12 @@ function renderRows(rows) {
                 processApp(app.id, 'Rejected');
             });
         } else {
-            actionsCell.innerHTML = '<div class="actions-cell"><span class="action-link view-link-btn">View Details</span></div>';
+            // Not this reviewer's stage — show View only with a stage label
+            var stageNote = '';
+            if (isPositionChangeRecord(app) && !isFinal) {
+                stageNote = ' <span style="font-size:0.75em;color:#888;">(' + app.statusLabel + ')</span>';
+            }
+            actionsCell.innerHTML = '<div class="actions-cell"><span class="action-link view-link-btn">View Details</span>' + stageNote + '</div>';
             actionsCell.querySelector('.view-link-btn').addEventListener('click', function () {
                 openModal(app.id);
             });
@@ -494,37 +563,28 @@ function renderStatusHistory(app) {
     });
 
     if (isPositionChangeRecord(app)) {
-        if (app.status === 'pending-hr') {
-            entries.push({
-                title: 'Pending',
-                meta: 'with ' + (app.pendingWith || 'HR Evaluator')
-            });
+        // 3-stage position change workflow: HR Evaluator → HR Head → School Director
+        if (app.status === 'pending-hr-evaluator') {
+            entries.push({ title: 'Pending', meta: 'with HR Evaluator' });
+        } else if (app.status === 'pending-hr-head') {
+            entries.push({ title: 'Approved', meta: 'by HR Evaluator (forwarded to HR Head)' });
+            entries.push({ title: 'Pending', meta: 'with HR Head' });
         } else if (app.status === 'pending-sd') {
-            entries.push({
-                title: 'Approved',
-                meta: 'by ' + (app.hrReviewedBy || 'HR Evaluator') + ' on ' + (app.hrReviewedAt || '---')
-            });
-            entries.push({
-                title: 'Pending',
-                meta: 'with ' + (app.pendingWith || 'School Director')
-            });
+            entries.push({ title: 'Approved', meta: 'by HR Evaluator' });
+            entries.push({ title: 'Approved', meta: 'by HR Head (forwarded to School Director)' });
+            entries.push({ title: 'Pending', meta: 'with School Director' });
         } else if (app.status === 'approved') {
+            entries.push({ title: 'Approved', meta: 'by HR Evaluator' });
+            entries.push({ title: 'Approved', meta: 'by HR Head' });
             entries.push({
-                title: 'Approved',
-                meta: 'by ' + (app.hrReviewedBy || 'HR Evaluator') + ' on ' + (app.hrReviewedAt || '---')
-            });
-            entries.push({
-                title: 'Approved',
-                meta: 'by ' + (app.finalReviewedBy || sdName) + ' on ' + (app.finalReviewedAt || '---')
+                title: 'Fully Approved',
+                meta: 'by ' + (app.reviewedBy || 'School Director') + ' — Position updated to: ' + (app.requestedPos || '---')
             });
         } else if (app.status === 'rejected') {
-            entries.push({
-                title: 'Approved',
-                meta: 'by ' + (app.hrReviewedBy || 'HR Evaluator') + ' on ' + (app.hrReviewedAt || '---')
-            });
+            entries.push({ title: 'In Review', meta: 'Multi-stage review process' });
             entries.push({
                 title: 'Rejected',
-                meta: 'by ' + (app.finalReviewedBy || sdName) + ' on ' + (app.finalReviewedAt || '---')
+                meta: 'by ' + (app.reviewedBy || 'Reviewer') + ' — ' + (app.remarks || 'No remarks.')
             });
         }
 
@@ -764,9 +824,10 @@ function openModal(id) {
     renderStatusHistory(app);
     updateModalDocPage();
 
-    // Only show Approve/Reject if it's SD's stage
+    // Show Approve/Reject only when it's this reviewer's turn
+    var modalCanAct = isPositionChangeRecord(app) ? canActOnPositionRecord(app) : canActOnApp(app.status);
     document.getElementById('modalActions').style.display =
-        (!isFinalStatus(app.status) && canActOnApp(app.status)) ? 'flex' : 'none';
+        (!isFinalStatus(app.status) && modalCanAct) ? 'flex' : 'none';
 
     document.getElementById('viewModal').style.display = 'flex';
 }
@@ -780,10 +841,11 @@ async function processApp(id, decision) {
     const app = findRecordById(id);
     if (!app) return;
 
-    // Guard: only allow action if it's SD's stage
-    if (!canActOnApp(app.status)) {
+    // Client-side guard: only allow action if it's this reviewer's stage
+    var localCanAct = isPositionChangeRecord(app) ? canActOnPositionRecord(app) : canActOnApp(app.status);
+    if (!localCanAct) {
         showToast('info', 'Action Not Allowed',
-            'This application is not at the School Director stage.');
+            'This request is not at your approval stage. Current stage: ' + app.statusLabel);
         return;
     }
 
@@ -798,19 +860,25 @@ async function processApp(id, decision) {
     try {
         var response = await fetch(endpoint, { method: 'POST', body: formData });
         if (!response.ok) {
-            throw new Error('Failed to update request');
+            var errData = {};
+            try { errData = await response.json(); } catch (e) {}
+            throw new Error(errData.detail || 'Failed to update request.');
         }
 
+        var result = await response.json();
         await refreshAppManagementData();
+        closeViewModal();
         renderCurrentTab();
 
+        var isApproved = decision === 'Approved';
+        var isPosition = app.sourceType === 'position';
         showToast(
-            decision === 'Approved' ? 'approved' : 'rejected',
-            decision === 'Approved' ? 'Application Approved' : 'Application Rejected',
-            app.name + (decision === 'Approved' ? "'s request has been approved." : "'s request has been rejected.")
+            isApproved ? 'approved' : 'rejected',
+            isApproved ? (isPosition ? 'Position Request Fully Approved' : 'Application Approved') : 'Request Rejected',
+            result.message || (app.name + (isApproved ? "'s position change has been fully approved." : "'s request has been rejected."))
         );
     } catch (error) {
-        showToast('info', 'Update Failed', 'Unable to process this request right now.');
+        showToast('info', 'Update Failed', error.message || 'Unable to process this request right now.');
     }
 }
 
@@ -819,7 +887,6 @@ document.addEventListener('DOMContentLoaded', function () {
     const sidebar     = document.getElementById('sidebar');
     const logoToggle  = document.getElementById('logoToggle');
     const closeBtn    = document.getElementById('closeBtn');
-    const tabNew      = document.getElementById('tab-new');
     const tabPosition = document.getElementById('tab-position');
     const posModal    = document.getElementById('positionChangeModal');
     const viewModal   = document.getElementById('viewModal');
@@ -839,17 +906,13 @@ document.addEventListener('DOMContentLoaded', function () {
     if (closeBtn)   closeBtn.onclick   = function () { sidebar.classList.add('collapsed'); };
     if (logoToggle) logoToggle.onclick = function () { sidebar.classList.toggle('collapsed'); };
 
-    // Tab — Records
-    tabNew.addEventListener('click', function () {
-        setMainTab('new');
-        renderCurrentTab();
-    });
-
     // Tab — Position Change Requests
-    tabPosition.addEventListener('click', function () {
-        setMainTab('position');
-        renderCurrentTab();
-    });
+    if (tabPosition) {
+        tabPosition.addEventListener('click', function () {
+            setMainTab('position');
+            renderCurrentTab();
+        });
+    }
 
     if (filterBtn) {
         filterBtn.addEventListener('click', function (e) {
@@ -1001,10 +1064,9 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     // Initial render
-    setMainTab('new');
+    setMainTab('position');
     syncFilterChip();
     refreshAppManagementData().then(function () {
         renderCurrentTab();
-        applyEmailDecisionIntent();
     });
 });

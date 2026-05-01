@@ -33,13 +33,33 @@ HRERS is a FastAPI-based HR and employee records system backed by MySQL.
 
 4. Initialize the schema by running the `.sql` files in `database_schema/` against `hrers_project`.
 
-	Run every file except `reset_schema.sql`.
+	This step creates the tables and seed data that the app expects. If you skip it, the app will start with missing tables and you may see an internal server error.
 
-	A sensible order is:
+	The easiest way on Windows is to run the setup script from the project root:
 
-	- `users.sql`
-	- `departments.sql`
-	- the remaining table/data scripts needed for your environment
+	```powershell
+	powershell -ExecutionPolicy Bypass -File .\setup-schema.ps1
+	```
+
+	The script reads `DATABASE_URL` from `.env`, imports the schema files in the correct order, and stops if one file fails.
+
+	If you prefer to do it manually, import the files in this order:
+
+	1. `users.sql`
+	2. `departments.sql`
+	3. `user_profiles.sql`
+	4. `employment_history.sql`
+	5. `attendance_records.sql`
+	6. `leave_requests.sql`
+	7. `position_change_requests.sql`
+	8. `profile_documents.sql`
+	9. `training_sessions.sql`
+	10. `training_registrations.sql`
+	11. `audit_logs.sql`
+
+	Do not run `reset_schema.sql` unless you want to wipe the database first.
+
+	If you are using MySQL Workbench, open a query tab, load one file at a time, and click Run. Start with `users.sql`, then `departments.sql`, then continue through the list above.
 
 5. Start the app.
 

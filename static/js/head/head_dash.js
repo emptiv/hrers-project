@@ -11,13 +11,14 @@ document.addEventListener('DOMContentLoaded', function() {
 let attendanceChartInstance = null;
 
 function initializeDashboard() {
+    // Chart must exist before data loads so the update call finds it
+    initializeAttendanceChart();
+
     Promise.all([
         loadProfileSummary(),
         loadDashboardNotifications(),
         loadDashboardData(),
-    ]).then(function () {
-        initializeAttendanceChart();
-    });
+    ]);
 }
 
 /* =================================
@@ -183,6 +184,12 @@ function initializeAttendanceChart() {
     const ctx = document.getElementById('attendanceChart');
     if (!ctx) return;
 
+    // Destroy previous instance if re-initializing
+    if (attendanceChartInstance) {
+        attendanceChartInstance.destroy();
+        attendanceChartInstance = null;
+    }
+
     attendanceChartInstance = new Chart(ctx, {
         type: 'line',
         data: {
@@ -199,13 +206,15 @@ function initializeAttendanceChart() {
                     pointBackgroundColor: '#10b981',
                     pointBorderColor: '#fff',
                     pointBorderWidth: 2,
-                    pointRadius: 5
+                    pointRadius: 5,
+                    pointHoverRadius: 7,
                 }
             ]
         },
         options: {
             responsive: true,
             maintainAspectRatio: true,
+            animation: { duration: 800, easing: 'easeInOutQuart' },
             plugins: {
                 legend: {
                     display: true,
@@ -214,20 +223,28 @@ function initializeAttendanceChart() {
                         boxWidth: 12,
                         padding: 15,
                         font: { size: 12, weight: '500' },
-                        color: '#1e293b'
+                        color: '#1e293b',
                     }
-                }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return ' ' + context.parsed.y.toFixed(1) + '%';
+                        }
+                    }
+                },
+                // "No data" empty state
+                emptyState: false,
             },
             scales: {
                 y: {
                     beginAtZero: true,
                     max: 100,
-                    grid: {
-                        color: 'rgba(0, 0, 0, 0.05)'
-                    },
+                    grid: { color: 'rgba(0, 0, 0, 0.05)' },
                     ticks: {
                         color: '#64748b',
-                        font: { size: 12 }
+                        font: { size: 12 },
+                        callback: function(value) { return value + '%'; }
                     }
                 },
                 x: {
@@ -240,6 +257,7 @@ function initializeAttendanceChart() {
         }
     });
 }
+
 
 /* =================================
     DATE UTILITIES
@@ -266,12 +284,10 @@ function getLast7Days() {
    ================================= */
 
 async function loadDashboardData() {
-    const totalEmployeesEl = document.getElementById('totalEmployees');
+    const totalEmployeesEl  = document.getElementById('totalEmployees');
     const activeEmployeesEl = document.getElementById('activeEmployees');
-    const onLeaveEl = document.getElementById('onLeave');
-
-    let totalEmployees = 0;
-    let onLeaveCount = 0;
+    const onLeaveEl         = document.getElementById('onLeave');
+    const attendanceRateEl  = document.getElementById('attendanceRate');
 
     try {
         const [kpiResponse, chartResponse] = await Promise.all([
@@ -281,33 +297,42 @@ async function loadDashboardData() {
 
         if (kpiResponse.ok) {
             const payload = await kpiResponse.json();
-            totalEmployees = Number(payload.totalEmployees || totalEmployees);
+            const total      = Number(payload.totalEmployees  || 0);
+            const onLeave    = Number(payload.onLeaveToday    !== undefined ? payload.onLeaveToday    : 0);
+            const present    = Number(payload.presentToday    !== undefined ? payload.presentToday    : Math.max(total - onLeave, 0));
+            const rate       = Number(payload.attendanceRate  || 0);
+
+            if (totalEmployeesEl)  animateNumber(totalEmployeesEl,  0, total,   1000);
+            if (activeEmployeesEl) animateNumber(activeEmployeesEl, 0, present, 1000);
+            if (onLeaveEl)         animateNumber(onLeaveEl,         0, onLeave, 800);
+            if (attendanceRateEl)  {
+                // animate then append %
+                let start = null;
+                const step = (ts) => {
+                    if (!start) start = ts;
+                    const p = Math.min((ts - start) / 1000, 1);
+                    attendanceRateEl.textContent = (p * rate).toFixed(1) + '%';
+                    if (p < 1) requestAnimationFrame(step);
+                };
+                requestAnimationFrame(step);
+            }
         }
 
         if (chartResponse.ok) {
             const chartPayload = await chartResponse.json();
-            const statusData = (chartPayload.statusBreakdown && chartPayload.statusBreakdown.data) || [];
-            onLeaveCount = Number(statusData[1] || onLeaveCount);
-
             if (attendanceChartInstance && chartPayload.attendanceTrend) {
                 attendanceChartInstance.data.labels = chartPayload.attendanceTrend.labels || getLast7Days();
                 attendanceChartInstance.data.datasets[0].data = chartPayload.attendanceTrend.data || [];
                 attendanceChartInstance.update();
             }
+            // Hide loading overlay
+            const overlay = document.getElementById('chartLoadingOverlay');
+            if (overlay) overlay.style.display = 'none';
         }
     } catch (error) {
-    }
-
-    const activeEmployees = Math.max(totalEmployees - onLeaveCount, 0);
-
-    if (totalEmployeesEl) {
-        animateNumber(totalEmployeesEl, 0, totalEmployees, 1000);
-    }
-    if (activeEmployeesEl) {
-        animateNumber(activeEmployeesEl, 0, activeEmployees, 1000);
-    }
-    if (onLeaveEl) {
-        animateNumber(onLeaveEl, 0, onLeaveCount, 800);
+        // Hide overlay even on error so chart is visible
+        const overlay = document.getElementById('chartLoadingOverlay');
+        if (overlay) overlay.style.display = 'none';
     }
 }
 

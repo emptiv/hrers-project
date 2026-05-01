@@ -41,12 +41,6 @@
             </li>
             <hr>
             <li>
-                <a href="head_appmanagement.html" class="menu-item">
-                    <i class="fas fa-file"></i>
-                    <span>Application Management</span>
-                </a>
-            </li>
-            <li>
                 <a href="head_employeelist.html" class="menu-item">
                     <i class="fas fa-database"></i>
                     <span>Employee Records</span>
@@ -64,12 +58,7 @@
                     <span>Leave Management</span>
                 </a>
             </li>
-            <li>
-                <a href="#" class="menu-item">
-                    <i class="fas fa-star"></i>
-                    <span>Performance Evaluation</span>
-                </a>
-            </li>
+            
             <li>
                 <a href="head_training.html" class="menu-item">
                     <i class="fas fa-chalkboard-teacher"></i>
@@ -131,14 +120,30 @@
                                 <p class="kpi-change neutral"><i class="fas fa-info-circle"></i> Live from database</p>
                             </div>
                         </div>
+                        <div class="kpi-card">
+                            <div class="kpi-icon" style="background: linear-gradient(135deg,#6366f1,#818cf8);">
+                                <i class="fas fa-chart-line"></i>
+                            </div>
+                            <div class="kpi-content">
+                                <p class="kpi-label">Attendance Rate</p>
+                                <p class="kpi-number" id="attendanceRate">--%</p>
+                                <p class="kpi-change positive"><i class="fas fa-arrow-up"></i> Today</p>
+                            </div>
+                        </div>
                     </div>
                 </section>
 
                 <!-- Attendance Overview Section -->
                 <section class="attendance-section">
-                    <h2 class="section-title">Attendance Overview</h2>
-                    <div class="chart-container">
+                    <div style="display:flex; align-items:baseline; gap:0.75rem; flex-wrap:wrap; margin-bottom:0.5rem;">
+                        <h2 class="section-title" style="margin-bottom:0;">Attendance Overview</h2>
+                        <span style="font-size:0.8rem; color:#64748b;">Last 7 days — your department only</span>
+                    </div>
+                    <div class="chart-container" style="position:relative;">
                         <canvas id="attendanceChart"></canvas>
+                        <div id="chartLoadingOverlay" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.7);border-radius:8px;font-size:0.9rem;color:#64748b;">
+                            <i class="fas fa-spinner fa-spin" style="margin-right:0.5rem;"></i> Loading chart…
+                        </div>
                     </div>
                 </section>
 
@@ -170,3 +175,4 @@
     <script src="../../static/js/head/head_dash.js"></script>
 </body>
 </html>
+

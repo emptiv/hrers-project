@@ -81,6 +81,26 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     return user
 
 
+def get_current_user_optional(request: Request, db: Session = Depends(get_db)) -> User | None:
+    """Optional authentication - returns None if no valid token instead of raising exception."""
+    token = _extract_token(request)
+    if not token:
+        return None
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        subject = payload.get("sub")
+        if subject is None:
+            return None
+    except JWTError:
+        return None
+
+    user = db.query(User).filter(User.username == subject).first()
+    if user is None or not bool(user.is_active):
+        return None
+    return user
+
+
 def require_roles(*allowed_roles: UserRole):
     def role_guard(current_user: User = Depends(get_current_user)) -> User:
         if current_user.role not in allowed_roles:

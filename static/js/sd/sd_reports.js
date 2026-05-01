@@ -14,12 +14,14 @@ let statusChartInstance = null;
 let departmentChartInstance = null;
 
 function initializeDashboard() {
+    // Load dynamic data first to ensure filters are ready
+    loadDepartments();
+
     // Initialize all charts
     initializeAttendanceChart();
     initializeStatusChart();
     initializeDepartmentChart();
     
-    // Load dynamic data
     loadDashboardData();
     
     // Setup menu items
@@ -68,7 +70,7 @@ function setupMenuItems() {
 function setupEventListeners() {
     // Filter controls
     const dateRangeSelect = document.getElementById('dateRange');
-    const schoolSelect = document.getElementById('school');
+    const departmentSelect = document.getElementById('department');
     
     if (dateRangeSelect) {
         dateRangeSelect.addEventListener('change', () => {
@@ -76,9 +78,9 @@ function setupEventListeners() {
         });
     }
     
-    if (schoolSelect) {
-        schoolSelect.addEventListener('change', () => {
-            handleSchoolChange(schoolSelect.value);
+    if (departmentSelect) {
+        departmentSelect.addEventListener('change', () => {
+            handleDepartmentChange(departmentSelect.value);
         });
     }
 }
@@ -184,7 +186,7 @@ function setupModalListeners() {
     });
     
     // Report Form Fields
-    const reportFormInputs = document.querySelectorAll('#customSchool, #customDateStart, #customDateEnd');
+    const reportFormInputs = document.querySelectorAll('#customDepartment, #customDateStart, #customDateEnd');
     reportFormInputs.forEach(input => {
         input.addEventListener('change', () => {
             updateReportPreview();
@@ -221,7 +223,7 @@ function closeModal(modal) {
 
 async function updateReportPreview() {
     const reportType = document.querySelector('input[name="reportType"]:checked');
-    const school = document.getElementById('customSchool').value;
+    const department = document.getElementById('customDepartment').value;
     const startDate = document.getElementById('customDateStart').value;
     const endDate = document.getElementById('customDateEnd').value;
     const checkedFields = Array.from(document.querySelectorAll('.checkbox-item input[type="checkbox"]:checked'))
@@ -241,7 +243,7 @@ async function updateReportPreview() {
     
     let reportData = [];
     try {
-        const response = await fetch(`/api/reports/preview?reportType=${encodeURIComponent(reportType.value)}&school=${encodeURIComponent(school)}`);
+        const response = await fetch(`/api/reports/preview?reportType=${encodeURIComponent(reportType.value)}&department=${encodeURIComponent(department)}`);
         if (response.ok) {
             const payload = await response.json();
             reportData = payload.items || [];
@@ -254,7 +256,7 @@ async function updateReportPreview() {
         <div class="preview-content">
             <h4>${reportType.nextElementSibling.innerText} Report</h4>
             <p style="color: #64748b; font-size: 0.85rem; margin: 0.5rem 0 1rem 0;">
-                ${school !== 'all' ? `School: ${getSchoolName(school)} | ` : ''}
+                ${department !== 'all' ? `Department: ${department} | ` : ''}
                 ${startDate ? `From: ${startDate} | ` : ''}
                 ${endDate ? `To: ${endDate}` : ''}
             </p>
@@ -279,24 +281,15 @@ async function updateReportPreview() {
     `;
 }
 
-function getSchoolName(schoolCode) {
-    const schools = {
-        'cs': 'Computer Science',
-        'engineering': 'Engineering',
-        'nursing': 'Nursing',
-        'criminology': 'Criminology',
-        'education': 'Education'
-    };
-    return schools[schoolCode] || 'All Schools';
-}
+
 
 function getSelectedReportConfig() {
     const reportType = document.querySelector('input[name="reportType"]:checked');
-    const school = document.getElementById('customSchool')?.value || 'all';
+    const department = document.getElementById('customDepartment')?.value || 'all';
     const fields = Array.from(document.querySelectorAll('.checkbox-item input[type="checkbox"]:checked'))
         .map(cb => cb.nextElementSibling.innerText.toLowerCase().replace(/\s+/g, '-'));
 
-    return { reportType, school, fields };
+    return { reportType, department, fields };
 }
 
 async function downloadReportExport(triggerLabel) {
@@ -308,7 +301,7 @@ async function downloadReportExport(triggerLabel) {
     
     const params = new URLSearchParams({
         reportType: config.reportType.value,
-        school: config.school,
+        department: config.department,
         fields: config.fields.join(','),
     });
 
@@ -322,7 +315,7 @@ async function downloadReportExport(triggerLabel) {
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${config.reportType.value}_${config.school}_${triggerLabel}.csv`;
+    link.download = `${config.reportType.value}_${config.department}_${triggerLabel}.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -394,9 +387,10 @@ function handleDateRangeChange(range) {
     updateChartsWithDateRange(range);
 }
 
-function handleSchoolChange(school) {
-    // Update charts and data based on school
-    updateChartsWithSchool(school);
+function handleDepartmentChange(department) {
+    // Reload dashboard with department filter
+    loadKPIData(department);
+    loadChartData(department);
 }
 
 /* =================================
@@ -571,6 +565,37 @@ function initializeDepartmentChart() {
 }
 
 /* =================================
+   DEPARTMENT DROPDOWN
+   ================================= */
+
+async function loadDepartments() {
+    const departmentSelect = document.getElementById('department');
+    const customDepartmentSelect = document.getElementById('customDepartment');
+    
+    try {
+        const response = await fetch('/api/departments');
+        if (response.ok) {
+            const payload = await response.json();
+            const departments = payload.items || [];
+            
+            departments.forEach(dept => {
+                const opt1 = document.createElement('option');
+                opt1.value = dept.name;
+                opt1.textContent = dept.name;
+                if (departmentSelect) departmentSelect.appendChild(opt1);
+                
+                const opt2 = document.createElement('option');
+                opt2.value = dept.name;
+                opt2.textContent = dept.name;
+                if (customDepartmentSelect) customDepartmentSelect.appendChild(opt2);
+            });
+        }
+    } catch (error) {
+        console.error('Error loading departments:', error);
+    }
+}
+
+/* =================================
    CHART UPDATE HANDLERS
    ================================= */
 
@@ -587,18 +612,19 @@ function updateChartsWithSchool(school) {
    ================================= */
 
 function loadDashboardData() {
-    loadKPIData();
-    loadChartData();
+    const department = document.getElementById('department')?.value || 'all';
+    loadKPIData(department);
+    loadChartData(department);
 }
 
-async function loadKPIData() {
+async function loadKPIData(department = 'all') {
     const totalEmployees = document.getElementById('totalEmployees');
     const attendanceRate = document.getElementById('attendanceRate');
     const turnoverRate = document.getElementById('turnoverRate');
-    const avgPerformance = document.getElementById('avgPerformance');
+
 
     try {
-        const response = await fetch('/api/reports/kpi');
+        const response = await fetch(`/api/reports/kpi?department=${encodeURIComponent(department)}`);
         if (!response.ok) {
             throw new Error('Failed to load KPI data');
         }
@@ -607,18 +633,31 @@ async function loadKPIData() {
         if (totalEmployees) totalEmployees.textContent = String(kpi.totalEmployees ?? 0);
         if (attendanceRate) attendanceRate.textContent = `${Number(kpi.attendanceRate ?? 0).toFixed(1)}%`;
         if (turnoverRate) turnoverRate.textContent = `${Number(kpi.turnoverRate ?? 0).toFixed(2)}%`;
-        if (avgPerformance) avgPerformance.textContent = `${Number(kpi.avgPerformance ?? 0).toFixed(1)}/10`;
+
+        // Update Summary Statistics
+        if (kpi.summary) {
+            const approvedLeaves = document.getElementById('statApprovedLeaves');
+            const totalLeaves = document.getElementById('statTotalLeaves');
+            const pendingChanges = document.getElementById('statPendingChanges');
+            const activeDepts = document.getElementById('statActiveDepts');
+
+            if (approvedLeaves) approvedLeaves.textContent = String(kpi.summary.approvedLeaves ?? 0);
+            if (totalLeaves) totalLeaves.textContent = String(kpi.summary.totalLeaves ?? 0);
+            if (pendingChanges) pendingChanges.textContent = String(kpi.summary.pendingPositionChanges ?? 0);
+            if (activeDepts) activeDepts.textContent = String(kpi.summary.activeDepartments ?? 0);
+        }
+
     } catch (error) {
         if (totalEmployees) totalEmployees.textContent = '0';
         if (attendanceRate) attendanceRate.textContent = '0.0%';
         if (turnoverRate) turnoverRate.textContent = '0.00%';
-        if (avgPerformance) avgPerformance.textContent = '0.0/10';
+
     }
 }
 
-async function loadChartData() {
+async function loadChartData(department = 'all') {
     try {
-        const response = await fetch('/api/reports/charts');
+        const response = await fetch(`/api/reports/charts?department=${encodeURIComponent(department)}`);
         if (!response.ok) {
             throw new Error('Failed to load chart data');
         }

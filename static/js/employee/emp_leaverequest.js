@@ -58,13 +58,14 @@ function renderLeaveTable() {
     leaveItems.forEach((leave) => {
         const clone = template.content.cloneNode(true);
         const statusClass = leave.status.toLowerCase();
+        const displayStatus = leave.displayStatus || leave.status;
 
         clone.querySelector('.col-filed').innerText = leave.dateFiled;
         clone.querySelector('.col-type').innerHTML = `<strong>${leave.leaveType}</strong>`;
         clone.querySelector('.col-start').innerText = leave.startDate;
         clone.querySelector('.col-end').innerText = leave.endDate;
         clone.querySelector('.col-days').innerText = leave.numDays;
-        clone.querySelector('.col-status').innerHTML = `<span class="status-pill ${statusClass}">${leave.status}</span>`;
+        clone.querySelector('.col-status').innerHTML = `<span class="status-pill ${statusClass}">${displayStatus}</span>`;
         clone.querySelector('.col-reviewer').innerText = leave.reviewedBy;
         clone.querySelector('.action-link').onclick = () => openViewModalByID(leave.id);
 
@@ -83,10 +84,11 @@ function openViewModalByID(id) {
     document.getElementById('modalFileName').innerText = data.fileName;
     document.getElementById('modalSubmitDate').innerText = `${data.dateFiled} at ${data.submitTime}`;
     document.getElementById('modalReason').innerText = data.reason;
-    document.getElementById('modalRemarks').innerText = data.reviewRemarks;
+    document.getElementById('modalRemarks').innerText = data.reviewRemarks || 'Awaiting Department Head review.';
 
     const statusClass = data.status.toLowerCase();
-    document.getElementById('modalStatusContainer').innerHTML = `<span class="status-pill ${statusClass}">${data.status}</span>`;
+    const displayStatus = data.displayStatus || data.status;
+    document.getElementById('modalStatusContainer').innerHTML = `<span class="status-pill ${statusClass}">${displayStatus}</span>`;
 
     const preview = document.querySelector('.pdf-placeholder');
     preview.innerHTML = `<i class="fas fa-file-pdf"></i><p>Preview for ${data.fileName}</p>`;

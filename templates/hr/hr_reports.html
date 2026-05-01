@@ -34,7 +34,6 @@
         <li><a href="hr_employeelist.html" class="menu-item"><i class="fas fa-database"></i><span>Employee Records</span></a></li>
         <li><a href="hr_attendancemonitoring.html" class="menu-item"><i class="fas fa-calendar"></i><span>Attendance Monitoring</span></a></li>
         <li><a href="hr_leaveselect.html" class="menu-item"><i class="fas fa-briefcase"></i><span>Leave Management</span></a></li>
-        <li><a href="#" class="menu-item"><i class="fas fa-star"></i><span>Performance Evaluation</span></a></li>
         <li><a href="hr_training.html" class="menu-item"><i class="fas fa-chalkboard-teacher"></i><span>Trainings</span></a></li>
         <li><a href="hr_reports.html" class="menu-item active"><i class="fas fa-chart-line"></i><span>Reports / Analytics</span></a></li>
     </ul>
@@ -59,13 +58,8 @@
                             <option value="custom">Custom</option>
                         </select>
 
-                        <select id="school" class="filter-select">
-                            <option value="all">All Schools</option>
-                            <option value="cs">Computer Science</option>
-                            <option value="engineering">Engineering</option>
-                            <option value="nursing">Nursing</option>
-                            <option value="criminology">Criminology</option>
-                            <option value="education">Education</option>
+                        <select id="department" class="filter-select">
+                            <option value="all">All Departments</option>
                         </select>
 
                         <button class="btn-custom-report" id="customReportBtn">
@@ -112,16 +106,7 @@
                                 <p class="kpi-change negative"><i class="fas fa-arrow-down"></i> Live from database</p>
                             </div>
                         </div>
-                        <div class="kpi-card">
-                            <div class="kpi-icon performance-icon">
-                                <i class="fas fa-star"></i>
-                            </div>
-                            <div class="kpi-content">
-                                <p class="kpi-label">Avg Performance</p>
-                                <p class="kpi-number" id="avgPerformance">--</p>
-                                <p class="kpi-change positive"><i class="fas fa-arrow-up"></i> Live from database</p>
-                            </div>
-                        </div>
+
                     </div>
                 </section>
 
@@ -187,15 +172,7 @@
                             </div>
                         </div>
 
-                        <div class="insight-card success">
-                            <div class="insight-icon">
-                                <i class="fas fa-star"></i>
-                            </div>
-                            <div class="insight-content">
-                                <h4>Performance Insight</h4>
-                                <p>Performance summary is generated from current reporting data.</p>
-                            </div>
-                        </div>
+
                     </div>
                 </section>
 
@@ -204,20 +181,20 @@
                     <h2 class="section-title">Summary Statistics</h2>
                     <div class="stats-grid">
                         <div class="stat-item">
-                            <span class="stat-label">New Hires (This Month)</span>
-                            <span class="stat-value">--</span>
+                            <span class="stat-label">Total Approved Leaves</span>
+                            <span class="stat-value" id="statApprovedLeaves">--</span>
                         </div>
                         <div class="stat-item">
-                            <span class="stat-label">Separations (This Month)</span>
-                            <span class="stat-value">--</span>
+                            <span class="stat-label">Total Leave Requests</span>
+                            <span class="stat-value" id="statTotalLeaves">--</span>
                         </div>
                         <div class="stat-item">
-                            <span class="stat-label">Leave Days Used (This Month)</span>
-                            <span class="stat-value">--</span>
+                            <span class="stat-label">Pending Position Changes</span>
+                            <span class="stat-value" id="statPendingChanges">--</span>
                         </div>
                         <div class="stat-item">
-                            <span class="stat-label">Training Hours (This Month)</span>
-                            <span class="stat-value">--</span>
+                            <span class="stat-label">Active Departments</span>
+                            <span class="stat-value" id="statActiveDepts">--</span>
                         </div>
                     </div>
                 </section>
@@ -256,10 +233,7 @@
                                 <input type="radio" name="reportType" value="leave" id="leave">
                                 <label for="leave">Leave</label>
                             </div>
-                            <div class="report-type-option" data-type="evaluation">
-                                <input type="radio" name="reportType" value="evaluation" id="evaluation">
-                                <label for="evaluation">Evaluation Summaries</label>
-                            </div>
+
                         </div>
                     </div>
 
@@ -268,14 +242,9 @@
                         <label class="section-label">Filters</label>
                         
                         <div class="filter-item">
-                            <label for="customSchool">School</label>
-                            <select id="customSchool" class="form-select">
-                                <option value="all">All Schools</option>
-                                <option value="cs">Computer Science</option>
-                                <option value="engineering">Engineering</option>
-                                <option value="nursing">Nursing</option>
-                                <option value="criminology">Criminology</option>
-                                <option value="education">Education</option>
+                            <label for="customDepartment">Department</label>
+                            <select id="customDepartment" class="form-select">
+                                <option value="all">All Departments</option>
                             </select>
                         </div>
 
@@ -416,3 +385,4 @@
     <script src="../../static/js/hr/hr_reports.js"></script>
 </body>
 </html>
+

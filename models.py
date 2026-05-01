@@ -1,6 +1,7 @@
 from enum import Enum
 
-from sqlalchemy import Boolean, Column, Date, DateTime, Enum as SAEnum, ForeignKey, Integer, LargeBinary, Numeric, String, Text, func
+from sqlalchemy import Boolean, Column, Date, DateTime, Enum as SAEnum, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy.dialects.mysql import LONGBLOB
 
 from database import Base
 
@@ -68,6 +69,14 @@ class LeaveStatus(str, Enum):
     rejected = "Rejected"
 
 
+class LeaveApprovalStage(str, Enum):
+    department_head = "department_head"
+    hr = "hr"
+    hr_head = "hr_head"
+    school_director = "school_director"
+    completed = "completed"
+
+
 class LeaveRequest(Base):
     __tablename__ = "leave_requests"
 
@@ -84,6 +93,7 @@ class LeaveRequest(Base):
         nullable=False,
         default=LeaveStatus.pending,
     )
+    approval_stage = Column(String(40), nullable=False, default=LeaveApprovalStage.department_head.value)
     reason = Column(Text, nullable=False)
     file_name = Column(String(255), nullable=True)
     reviewed_by_user_id = Column(Integer, nullable=True)
@@ -97,6 +107,13 @@ class PositionChangeStatus(str, Enum):
     pending = "Pending"
     approved = "Approved"
     rejected = "Rejected"
+
+
+class PositionChangeApprovalStage(str, Enum):
+    hr_evaluator = "hr_evaluator"
+    hr_head = "hr_head"
+    school_director = "school_director"
+    completed = "completed"
 
 
 class PositionChangeRequest(Base):
@@ -116,6 +133,7 @@ class PositionChangeRequest(Base):
         nullable=False,
         default=PositionChangeStatus.pending,
     )
+    approval_stage = Column(String(40), nullable=False, default=PositionChangeApprovalStage.hr_evaluator.value)
     reviewed_by_user_id = Column(Integer, nullable=True)
     reviewed_by_name = Column(String(150), nullable=True)
     review_remarks = Column(Text, nullable=True)
@@ -223,7 +241,7 @@ class ProfileDocument(Base):
     document_name = Column(String(255), nullable=False)
     document_type = Column(String(50), nullable=False)
     status = Column(String(40), nullable=False, default="Submitted")
-    file_content = Column(LargeBinary, nullable=True)
+    file_content = Column(LONGBLOB, nullable=True)
     file_size = Column(Integer, nullable=True)
     reviewed_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     reviewed_by_name = Column(String(150), nullable=True)

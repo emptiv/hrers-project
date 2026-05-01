@@ -35,7 +35,6 @@
         <li><a href="hr_employeelist.html" class="menu-item"><i class="fas fa-database"></i><span>Employee Records</span></a></li>
         <li><a href="hr_attendancemonitoring.html" class="menu-item active"><i class="fas fa-calendar"></i><span>Attendance Monitoring</span></a></li>
         <li><a href="hr_leaveselect.html" class="menu-item"><i class="fas fa-briefcase"></i><span>Leave Management</span></a></li>
-        <li><a href="#" class="menu-item"><i class="fas fa-star"></i><span>Performance Evaluation</span></a></li>
         <li><a href="hr_training.html" class="menu-item"><i class="fas fa-chalkboard-teacher"></i><span>Trainings</span></a></li>
         <li><a href="hr_reports.html" class="menu-item"><i class="fas fa-chart-line"></i><span>Reports / Analytics</span></a></li>
     </ul>
@@ -159,7 +158,6 @@
                                 <th>Time Out</th>
                                 <th>Total Hours</th>
                                 <th>Status</th>
-                                <th>Action</th>
                             </tr>
                         </thead>
                         <tbody id="weeklyTableBody"></tbody>
@@ -178,7 +176,7 @@
                         </div>
                     </div>
                     <div class="hours-summary-box">
-                        Total Hours This Week
+                        <span id="hoursSummaryLabel">Total Hours This Week</span>
                         <span id="totalHoursCount">0h 00m</span>
                     </div>
                 </aside>
@@ -212,3 +210,4 @@
     <script src="../../static/js/hr/hr_attendance.js"></script>
 </body>
 </html>
+

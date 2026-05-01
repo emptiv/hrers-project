@@ -29,7 +29,6 @@
         <li><a href="hr_employeelist.html" class="menu-item active"><i class="fas fa-database"></i><span>Employee Records</span></a></li>
         <li><a href="hr_attendancemonitoring.html" class="menu-item"><i class="fas fa-calendar"></i><span>Attendance Monitoring</span></a></li>
         <li><a href="hr_leaveselect.html" class="menu-item"><i class="fas fa-briefcase"></i><span>Leave Management</span></a></li>
-        <li><a href="#" class="menu-item"><i class="fas fa-star"></i><span>Performance Evaluation</span></a></li>
         <li><a href="hr_training.html" class="menu-item"><i class="fas fa-chalkboard-teacher"></i><span>Trainings</span></a></li>
         <li><a href="hr_reports.html" class="menu-item"><i class="fas fa-chart-line"></i><span>Reports / Analytics</span></a></li>
     </ul>
@@ -57,8 +56,20 @@
                             <th>Employee ID</th>
                             <th>Full Name</th>
                             <th>Department</th>
-                            <th>Role</th>
-                            <th>Status</th>
+                            <th>
+                                Position
+                                <select id="filterPosition" class="table-filter" style="margin-left: 8px; padding: 2px 4px; border-radius: 4px; border: 1px solid #ccc; font-size: 0.85rem;">
+                                    <option value="">All</option>
+                                </select>
+                            </th>
+                            <th>
+                                Status
+                                <select id="filterStatus" class="table-filter" style="margin-left: 8px; padding: 2px 4px; border-radius: 4px; border: 1px solid #ccc; font-size: 0.85rem;">
+                                    <option value="">All</option>
+                                    <option value="Active">Active</option>
+                                    <option value="Inactive">Inactive</option>
+                                </select>
+                            </th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -74,3 +85,4 @@
 <script src="/static/js/hr/hr_employeelist.js"></script>
 </body>
 </html>
+

@@ -69,31 +69,7 @@ function applyProfileToView(profile) {
     renderProfileDocuments(profile.documents || []);
     renderProfileHistory(profile.history || []);
 
-    var requestBtn = document.getElementById('requestPositionChangeBtn');
-    if (requestBtn) {
-        requestBtn.onclick = function () {
-            var hrEmail = 'hr@hrers.local';
-            var subject = 'Position Change Request - ' + (profile.fullName || 'Employee');
-            var bodyLines = [
-                'Good day HR Team,',
-                '',
-                'I would like to request a position change.',
-                '',
-                'Employee Name: ' + (profile.fullName || '--'),
-                'Employee ID: ' + (profile.employeeNo || profile.id || '--'),
-                'Current Position: ' + (profile.position || profile.roleLabel || '--'),
-                'Department: ' + (profile.department || '--'),
-                '',
-                'Requested Position: ',
-                'Preferred Effective Date: ',
-                'Reason: ',
-                '',
-                'Thank you.'
-            ];
 
-            window.location.href = 'mailto:' + hrEmail + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(bodyLines.join('\n'));
-        };
-    }
 }
 
 function renderDocumentAlerts(alerts) {
@@ -152,7 +128,9 @@ function renderProfileDocuments(documents) {
                     <td>${type}</td>
                     <td class="${statusClass}">${status}</td>
                     <td>${date}</td>
-                    <td class="actions">---</td>
+                    <td class="actions">
+                        <i class="fas fa-trash-alt action-icon" onclick="openDeleteModal(${doc.id}, '${name}')" title="Delete" style="cursor: pointer;"></i>
+                    </td>
                 </tr>
             `;
         }
@@ -164,8 +142,9 @@ function renderProfileDocuments(documents) {
                 <td class="${statusClass}">${status}</td>
                 <td>${date}</td>
                 <td class="actions">
-                    <a href="${url}" target="_blank"><i class="fas fa-eye action-icon"></i></a>
-                    <a href="${url}" download><i class="fas fa-download action-icon"></i></a>
+                    <a href="${url}?mode=inline" target="_blank" title="View"><i class="fas fa-eye action-icon"></i></a>
+                    <a href="${url}?mode=attachment" download title="Download"><i class="fas fa-download action-icon"></i></a>
+                    <i class="fas fa-trash-alt action-icon" onclick="openDeleteModal(${doc.id}, '${name}')" title="Delete" style="cursor: pointer;"></i>
                 </td>
             </tr>
         `;

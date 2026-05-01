@@ -9,10 +9,12 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "mysql+pymysql://root:admin1234@localhost/hrers_project",
-)
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL is not set. Create a .env file in the project root and point it to a reachable database."
+    )
 
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)

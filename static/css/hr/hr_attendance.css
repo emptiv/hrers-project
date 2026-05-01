@@ -238,13 +238,13 @@ body {
 .master-content-wrapper {
     background: #fdfdfd;
     border-radius: 25px;
-    padding: 35px 40px;
+    padding: 35px 25px;
     position: relative;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
-    height: 100%;
-    margin: 0 auto;
-    width: 100%;
-    max-width: 1400px;
+    height: auto;
+    margin: 20px;
+    width: calc(100% - 20px);
+    max-width: none;
     overflow-y: auto;
     overflow-x: hidden;
     -ms-overflow-style: none;
@@ -393,9 +393,9 @@ hr {
 
 /* â”€â”€ MAIN CONTAINER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .main-container {
-    margin-left: 340px;
+    margin-left: 320px;
     height: 100vh;
-    padding: 20px;
+    padding: 0;
     overflow: hidden;
     display: flex;
     justify-content: center;
@@ -1209,7 +1209,23 @@ a.btn-secondary:visited {
 
 }
 
+    .hours-summary-box #hoursSummaryLabel {
+        display: inline-block;
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: #333;
+    }
 
+    .hours-summary-box #totalHoursCount {
+        display: block;
+        font-size: 1.4rem;
+        font-weight: 800;
+        color: var(--brand);
+        margin-top: 4px;
+    }
+    border: 1px solid #e9d5ff;
+
+}
 
 .pill-purple {
 

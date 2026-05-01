@@ -1,12 +1,14 @@
 import os
 import csv
+import zipfile
 from collections import defaultdict
 
-from io import StringIO
+from io import BytesIO, StringIO
 
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from decimal import Decimal, InvalidOperation
+from sqlalchemy.exc import SQLAlchemyError
 
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,16 +20,18 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
-from auth import authenticate_user, create_access_token, get_current_user, hash_password, require_roles
-from database import Base, engine, get_db
+from auth import authenticate_user, create_access_token, get_current_user, get_current_user_optional, hash_password, require_roles
+from database import Base, engine, get_db, SessionLocal
 from models import (
     AuditLog,
     AttendanceRecord,
     AttendanceStatus,
     Department,
     EmploymentHistory,
+    LeaveApprovalStage,
     LeaveRequest,
     LeaveStatus,
+    PositionChangeApprovalStage,
     ProfileDocument,
     UserProfile,
     PositionChangeRequest,
@@ -180,6 +184,63 @@ def profile_document_to_payload(document: ProfileDocument) -> dict[str, str | No
     }
 
 
+def infer_profile_document_file_metadata(document: ProfileDocument) -> tuple[str, str]:
+    content = bytes(document.file_content or b"")
+    filename_base = str(document.document_name or "Document").replace('"', "").replace("\\", "").replace("/", "")
+    filename_base = Path(filename_base).stem or "Document"
+
+    file_ext = "bin"
+    media_type = "application/octet-stream"
+
+    if content.startswith(b"%PDF-"):
+        file_ext = "pdf"
+        media_type = "application/pdf"
+    elif content.startswith(b"\xff\xd8\xff"):
+        file_ext = "jpg"
+        media_type = "image/jpeg"
+    elif content.startswith(b"\x89PNG\r\n\x1a\n"):
+        file_ext = "png"
+        media_type = "image/png"
+    elif content.startswith(b"GIF87a") or content.startswith(b"GIF89a"):
+        file_ext = "gif"
+        media_type = "image/gif"
+    elif content.startswith(b"RIFF") and len(content) >= 12 and content[8:12] == b"WEBP":
+        file_ext = "webp"
+        media_type = "image/webp"
+    elif content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        file_ext = "doc"
+        media_type = "application/msword"
+    elif content.startswith(b"PK\x03\x04"):
+        try:
+            with zipfile.ZipFile(BytesIO(content)) as archive:
+                names = set(archive.namelist())
+
+            if any(name.startswith("word/") for name in names):
+                file_ext = "docx"
+                media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            elif any(name.startswith("xl/") for name in names):
+                file_ext = "xlsx"
+                media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            elif any(name.startswith("ppt/") for name in names):
+                file_ext = "pptx"
+                media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            else:
+                file_ext = "zip"
+                media_type = "application/zip"
+        except zipfile.BadZipFile:
+            file_ext = "zip"
+            media_type = "application/zip"
+
+    if file_ext == "bin":
+        filename = filename_base
+    elif filename_base.lower().endswith(f".{file_ext}"):
+        filename = filename_base
+    else:
+        filename = f"{filename_base}.{file_ext}"
+
+    return filename, media_type
+
+
 def build_profile_payload(current_user: User, db: Session) -> dict[str, str | bool]:
     latest_position = (
         db.query(PositionChangeRequest)
@@ -281,6 +342,38 @@ def build_profile_payload(current_user: User, db: Session) -> dict[str, str | bo
     }
 
 
+def get_head_department_name(current_user: User, db: Session) -> str | None:
+    if current_user.role != UserRole.department_head:
+        return None
+
+    head_department = db.query(Department).filter(Department.head_user_id == int(current_user.id), Department.is_active == True).first()
+    return str(head_department.name) if head_department else None
+
+
+def can_department_head_access_employee(current_user: User, employee: User, db: Session) -> bool:
+    head_department_name = get_head_department_name(current_user, db)
+    if not head_department_name:
+        return False
+
+    return get_user_department_name(employee, db) == head_department_name
+
+
+def get_user_department_name(user: User, db: Session) -> str:
+    latest_position = (
+        db.query(PositionChangeRequest)
+        .filter(PositionChangeRequest.requester_user_id == int(user.id))
+        .order_by(PositionChangeRequest.created_at.desc(), PositionChangeRequest.id.desc())
+        .first()
+    )
+
+    if user.role == UserRole.department_head:
+        head_department_name = get_head_department_name(user, db)
+        if head_department_name:
+            return head_department_name
+
+    return str((latest_position.current_department if latest_position else None) or "General")
+
+
 def build_employee_directory_payload(user: User, db: Session) -> dict:
     latest_position = (
         db.query(PositionChangeRequest)
@@ -326,13 +419,59 @@ def build_employee_detail_payload(user: User, db: Session) -> dict[str, str | bo
         .first()
     )
 
+    department_record = None
     if user.role == UserRole.department_head:
-        head_department = db.query(Department).filter(Department.head_user_id == int(user.id), Department.is_active == True).first()
-        department_name = str(head_department.name) if head_department else "General"
+        department_record = db.query(Department).filter(Department.head_user_id == int(user.id), Department.is_active == True).first()
+        department_name = str(department_record.name) if department_record else "General"
     else:
         department_name = str((latest_position.current_department if latest_position else None) or "General")
+        if department_name and department_name != "General":
+            department_record = (
+                db.query(Department)
+                .filter(Department.name.ilike(department_name), Department.is_active == True)
+                .first()
+            )
 
     position_name = str((latest_position.current_position if latest_position and latest_position.current_position else None) or str(user.role.value).replace("_", " ").title())
+
+    department_head_name = ""
+    if department_record and department_record.head_user_id:
+        department_head = db.query(User).filter(User.id == int(department_record.head_user_id)).first()
+        if department_head:
+            department_head_name = str(department_head.full_name)
+
+    profile_documents = (
+        db.query(ProfileDocument)
+        .filter(ProfileDocument.user_id == int(user.id))
+        .order_by(ProfileDocument.uploaded_at.desc(), ProfileDocument.id.desc())
+        .all()
+    )
+
+    history_rows = (
+        db.query(EmploymentHistory)
+        .filter(EmploymentHistory.user_id == int(user.id))
+        .order_by(EmploymentHistory.event_date.desc(), EmploymentHistory.id.desc())
+        .all()
+    )
+
+    history: list[dict[str, str]] = []
+    for item in history_rows:
+        history.append(
+            {
+                "date": item.event_date.strftime("%Y") if item.event_date else "--",
+                "title": str(item.event_title or "History Event"),
+                "description": str(item.event_description or "--"),
+            }
+        )
+
+    if not history and user.created_at:
+        history.append(
+            {
+                "date": user.created_at.strftime("%Y"),
+                "title": "Hired",
+                "description": f"Joined as {position_name}",
+            }
+        )
 
     return {
         "id": int(user.id),
@@ -352,6 +491,15 @@ def build_employee_detail_payload(user: User, db: Session) -> dict[str, str | bo
         "address": "",
         "emergencyName": "",
         "emergencyPhone": "",
+        "departmentInfo": {
+            "id": int(department_record.id) if department_record else None,
+            "name": str(department_record.name) if department_record else department_name,
+            "location": str(department_record.location or "") if department_record else "",
+            "email": str(department_record.email or "") if department_record else "",
+            "headName": department_head_name,
+        },
+        "documents": [profile_document_to_payload(item) for item in profile_documents],
+        "history": history,
     }
 
 
@@ -360,6 +508,16 @@ def build_universal_user_payload(user: User, db: Session) -> dict[str, str | boo
     payload["name"] = str(user.full_name)
     payload["full_name"] = str(user.full_name)
     payload["employee_no"] = str(user.employee_no or payload.get("employeeNo") or "")
+    
+    # Include documents
+    profile_documents = (
+        db.query(ProfileDocument)
+        .filter(ProfileDocument.user_id == int(user.id))
+        .order_by(ProfileDocument.uploaded_at.desc(), ProfileDocument.id.desc())
+        .all()
+    )
+    payload["documents"] = [profile_document_to_payload(doc) for doc in profile_documents]
+    
     return payload
 
 
@@ -449,25 +607,93 @@ def can_review_leave(current_user: User, leave_request: LeaveRequest) -> bool:
     if current_user.id == leave_request.requester_user_id:
         return False
 
+    if leave_request.status != LeaveStatus.pending:
+        return False
+
+    approval_stage = str(leave_request.approval_stage or LeaveApprovalStage.department_head.value)
     role = current_user.role
-    if role in {UserRole.hr_evaluator, UserRole.hr_head, UserRole.school_director, UserRole.department_head}:
-        return True
+    if approval_stage == LeaveApprovalStage.department_head.value:
+        return role == UserRole.department_head
+    if approval_stage == LeaveApprovalStage.hr.value:
+        return role in {UserRole.hr_evaluator, UserRole.hr_head}
+    if approval_stage == LeaveApprovalStage.hr_head.value:
+        return role == UserRole.hr_head
+    if approval_stage == LeaveApprovalStage.school_director.value:
+        return role == UserRole.school_director
     return False
+
+
+def leave_display_status(item: LeaveRequest) -> str:
+    if item.status == LeaveStatus.approved:
+        return LeaveStatus.approved.value
+    if item.status == LeaveStatus.rejected:
+        return LeaveStatus.rejected.value
+
+    approval_stage = str(item.approval_stage or LeaveApprovalStage.department_head.value)
+    if approval_stage == LeaveApprovalStage.hr.value:
+        return "Pending HR Review"
+    if approval_stage == LeaveApprovalStage.hr_head.value:
+        return "Pending HR Head Review"
+    if approval_stage == LeaveApprovalStage.school_director.value:
+        return "Pending School Director Review"
+    if approval_stage == LeaveApprovalStage.completed.value:
+        return "Pending Review"
+    return "Pending Dept Head Review"
+
+
+def initial_leave_approval_stage(current_user: User) -> tuple[str, str]:
+    if current_user.role == UserRole.department_head:
+        return LeaveApprovalStage.hr.value, "Awaiting HR review."
+    if current_user.role == UserRole.hr_evaluator:
+        return LeaveApprovalStage.hr_head.value, "Awaiting HR Head review."
+    if current_user.role == UserRole.hr_head:
+        return LeaveApprovalStage.school_director.value, "Awaiting School Director review."
+    return LeaveApprovalStage.department_head.value, "Awaiting Department Head review."
 
 
 def can_review_position_request(current_user: User, position_request: PositionChangeRequest) -> bool:
     if current_user.id == position_request.requester_user_id:
         return False
 
-    return current_user.role in {
-        UserRole.hr_evaluator,
-        UserRole.hr_head,
-        UserRole.school_director,
-        UserRole.department_head,
-    }
+    if position_request.status != PositionChangeStatus.pending:
+        return False
+
+    approval_stage = str(position_request.approval_stage or PositionChangeApprovalStage.hr_evaluator.value)
+    if current_user.role == UserRole.hr_evaluator:
+        return approval_stage == PositionChangeApprovalStage.hr_evaluator.value
+    if current_user.role == UserRole.hr_head:
+        return approval_stage == PositionChangeApprovalStage.hr_head.value
+    if current_user.role == UserRole.school_director:
+        return approval_stage == PositionChangeApprovalStage.school_director.value
+
+    return False
 
 
-def leave_to_payload(item: LeaveRequest) -> dict:
+def position_change_display_status(item: PositionChangeRequest) -> str:
+    if item.status == PositionChangeStatus.approved:
+        return PositionChangeStatus.approved.value
+    if item.status == PositionChangeStatus.rejected:
+        return PositionChangeStatus.rejected.value
+
+    approval_stage = str(item.approval_stage or PositionChangeApprovalStage.hr_evaluator.value)
+    if approval_stage == PositionChangeApprovalStage.hr_head.value:
+        return "Pending - HR Head"
+    if approval_stage == PositionChangeApprovalStage.school_director.value:
+        return "Pending - School Director"
+    return "Pending - HR Evaluator"
+
+
+def position_change_pending_with(item: PositionChangeRequest) -> str:
+    approval_stage = str(item.approval_stage or PositionChangeApprovalStage.hr_evaluator.value)
+    if approval_stage == PositionChangeApprovalStage.hr_head.value:
+        return "HR Head"
+    if approval_stage == PositionChangeApprovalStage.school_director.value:
+        return "School Director"
+    return "HR Evaluator"
+
+
+def leave_to_payload(item: LeaveRequest, current_user: User | None = None) -> dict:
+    can_review = bool(current_user and can_review_leave(current_user, item))
     return {
         "id": item.id,
         "name": item.requester_name,
@@ -479,10 +705,13 @@ def leave_to_payload(item: LeaveRequest) -> dict:
         "endDate": item.end_date.isoformat(),
         "numDays": item.num_days,
         "status": item.status.value,
+        "approvalStage": str(item.approval_stage or LeaveApprovalStage.department_head.value),
+        "displayStatus": leave_display_status(item),
         "reviewedBy": item.reviewed_by_name or "---",
         "reason": item.reason,
         "fileName": item.file_name or "No Document Attached",
         "reviewRemarks": item.review_remarks or "Awaiting review.",
+        "canReview": can_review,
     }
 
 
@@ -497,6 +726,9 @@ def position_change_to_payload(item: PositionChangeRequest) -> dict:
         "effectiveDate": item.effective_date.isoformat(),
         "reason": item.reason,
         "status": item.status.value,
+        "approvalStage": str(item.approval_stage or PositionChangeApprovalStage.hr_evaluator.value),
+        "displayStatus": position_change_display_status(item),
+        "pendingWith": position_change_pending_with(item),
         "reviewedBy": item.reviewed_by_name or "---",
         "reviewRemarks": item.review_remarks or "Awaiting review.",
         "submittedAt": item.created_at.isoformat() if item.created_at else "",
@@ -576,6 +808,38 @@ def attendance_summary_payload(record: AttendanceRecord | None) -> dict:
     }
 
 
+def apply_leave_to_attendance(db: Session, leave: LeaveRequest) -> None:
+    """Upsert AttendanceRecord rows with status=Leave for every day in the approved leave range."""
+    current_day = leave.start_date
+    leave_note = str(leave.leave_type)
+    while current_day <= leave.end_date:
+        existing = (
+            db.query(AttendanceRecord)
+            .filter(
+                AttendanceRecord.user_id == int(leave.requester_user_id),
+                AttendanceRecord.record_date == current_day,
+            )
+            .first()
+        )
+        if existing:
+            if not existing.time_in:
+                existing.status = AttendanceStatus.leave
+                existing.notes = leave_note
+        else:
+            db.add(
+                AttendanceRecord(
+                    user_id=int(leave.requester_user_id),
+                    record_date=current_day,
+                    time_in=None,
+                    time_out=None,
+                    worked_seconds=0,
+                    status=AttendanceStatus.leave,
+                    notes=leave_note,
+                )
+            )
+        current_day += timedelta(days=1)
+
+
 def build_weekly_attendance_summary(records: list[AttendanceRecord], offset: int) -> dict:
     today = date.today()
     days_since_sunday = (today.weekday() + 1) % 7
@@ -587,14 +851,28 @@ def build_weekly_attendance_summary(records: list[AttendanceRecord], offset: int
     current_day = target_start
     while current_day <= target_end:
         record = next((item for item in week_records if item.record_date == current_day), None)
+        worked_seconds = int(record.worked_seconds or 0) if record else 0
+        ot_label = ""
+        ut_label = ""
+        if worked_seconds > 0:
+            reg_s = 8 * 3600
+            if worked_seconds > reg_s:
+                ot_label = f"{(worked_seconds - reg_s) // 3600}h {((worked_seconds - reg_s) % 3600) // 60:02d}m"
+            elif worked_seconds < reg_s:
+                ut_label = f"{(reg_s - worked_seconds) // 3600}h {((reg_s - worked_seconds) % 3600) // 60:02d}m"
+
+        is_leave_or_holiday = record and record.status in {AttendanceStatus.leave, AttendanceStatus.holiday}
         rows.append(
             {
                 "date": current_day.strftime("%B %-d, %Y") if os.name != "nt" else current_day.strftime("%B %#d, %Y"),
                 "day": current_day.strftime("%A"),
                 "timeIn": record.time_in.strftime("%-I:%M %p") if record and record.time_in and os.name != "nt" else (record.time_in.strftime("%#I:%M %p") if record and record.time_in else "--"),
                 "timeOut": record.time_out.strftime("%-I:%M %p") if record and record.time_out and os.name != "nt" else (record.time_out.strftime("%#I:%M %p") if record and record.time_out else "--"),
-                "hours": f"{int(record.worked_seconds or 0) // 3600}h {(int(record.worked_seconds or 0) % 3600) // 60:02d}m" if record else "--",
+                "hours": "--" if is_leave_or_holiday else (f"{worked_seconds // 3600}h {(worked_seconds % 3600) // 60:02d}m" if record else "--"),
                 "status": (record.status.value.lower() if record else ("day-off" if current_day.weekday() >= 5 else "absent")),
+                "overtime": "" if is_leave_or_holiday else ot_label,
+                "undertime": "" if is_leave_or_holiday else ut_label,
+                "notes": str(record.notes or "") if record else "",
             }
         )
         current_day += timedelta(days=1)
@@ -625,9 +903,23 @@ def build_monthly_attendance_summary(records: list[AttendanceRecord], offset: in
 
     for record in month_records:
         total_seconds += int(record.worked_seconds or 0)
+        worked_seconds = int(record.worked_seconds or 0)
+        is_leave_or_holiday = record.status in {AttendanceStatus.leave, AttendanceStatus.holiday}
+        ot_label = ""
+        ut_label = ""
+        if not is_leave_or_holiday:
+            reg_s = 8 * 3600
+            if worked_seconds > reg_s:
+                ot_label = f"{(worked_seconds - reg_s) // 3600}h {((worked_seconds - reg_s) % 3600) // 60:02d}m"
+            elif worked_seconds > 0 and worked_seconds < reg_s:
+                ut_label = f"{(reg_s - worked_seconds) // 3600}h {((reg_s - worked_seconds) % 3600) // 60:02d}m"
+
         attendance_map[record.record_date.day] = {
             "status": record.status.value.lower(),
-            "hours": f"{int(record.worked_seconds or 0) // 3600}h {(int(record.worked_seconds or 0) % 3600) // 60:02d}m",
+            "hours": "--" if is_leave_or_holiday else f"{worked_seconds // 3600}h {(worked_seconds % 3600) // 60:02d}m",
+            "overtime": ot_label,
+            "undertime": ut_label,
+            "notes": str(record.notes or ""),
         }
 
     return {
@@ -636,6 +928,103 @@ def build_monthly_attendance_summary(records: list[AttendanceRecord], offset: in
         "daysInMonth": days_in_month,
         "attendance": attendance_map,
         "total": f"{total_seconds // 3600}h {(total_seconds % 3600) // 60:02d}m",
+    }
+
+
+def format_attendance_duration(seconds: int) -> str:
+    return f"{seconds // 3600}h {(seconds % 3600) // 60:02d}m"
+
+
+def format_attendance_time(value: datetime | None) -> str:
+    if not value:
+        return "--"
+    return value.strftime("%-I:%M %p") if os.name != "nt" else value.strftime("%#I:%M %p")
+
+
+def format_attendance_date(value: date) -> str:
+    return value.strftime("%B %-d, %Y") if os.name != "nt" else value.strftime("%B %#d, %Y")
+
+
+def build_attendance_period_rows(records: list[AttendanceRecord], start_date: date, end_date: date) -> tuple[list[dict[str, str]], int]:
+    record_by_date = {record.record_date: record for record in records if start_date <= record.record_date <= end_date}
+    rows: list[dict[str, str]] = []
+    total_seconds = 0
+    today = date.today()
+
+    current_day = start_date
+    while current_day <= end_date:
+        record = record_by_date.get(current_day)
+        if record:
+            worked_seconds = int(record.worked_seconds or 0)
+            total_seconds += worked_seconds
+            status_value = record.status.value.lower()
+            if record.time_in and not record.time_out and current_day == today:
+                status_value = "active"
+            is_leave_or_holiday = record.status in {AttendanceStatus.leave, AttendanceStatus.holiday}
+            ot_label = ""
+            ut_label = ""
+            if worked_seconds > 0 and status_value != "active" and not is_leave_or_holiday:
+                reg_s = 8 * 3600
+                if worked_seconds > reg_s:
+                    ot_label = format_attendance_duration(worked_seconds - reg_s)
+                elif worked_seconds < reg_s:
+                    ut_label = format_attendance_duration(reg_s - worked_seconds)
+
+            rows.append(
+                {
+                    "date": format_attendance_date(current_day),
+                    "isoDate": current_day.isoformat(),
+                    "day": current_day.strftime("%A"),
+                    "timeIn": "--" if is_leave_or_holiday else format_attendance_time(record.time_in),
+                    "timeOut": "--" if is_leave_or_holiday else format_attendance_time(record.time_out),
+                    "hours": "--" if is_leave_or_holiday else (format_attendance_duration(worked_seconds) if worked_seconds else "Present"),
+                    "status": status_value,
+                    "overtime": ot_label,
+                    "undertime": ut_label,
+                    "notes": str(record.notes or ""),
+                }
+            )
+        else:
+            rows.append(
+                {
+                    "date": format_attendance_date(current_day),
+                    "isoDate": current_day.isoformat(),
+                    "day": current_day.strftime("%A"),
+                    "timeIn": "--",
+                    "timeOut": "--",
+                    "hours": "--",
+                    "status": "day-off" if current_day.weekday() >= 5 else "absent",
+                    "overtime": "",
+                    "undertime": "",
+                    "notes": "",
+                }
+            )
+        current_day += timedelta(days=1)
+
+    return rows, total_seconds
+
+
+def build_employee_attendance_period_payload(records: list[AttendanceRecord], view: str, offset: int) -> dict[str, object]:
+    view_key = view.strip().lower()
+    safe_offset = max(0, offset)
+    today = date.today()
+
+    if view_key == "monthly":
+        monthly_summary = build_monthly_attendance_summary(records, safe_offset)
+        monthly_summary["view"] = "monthly"
+        monthly_summary["periodText"] = "Month"
+        return monthly_summary
+
+    days_since_sunday = (today.weekday() + 1) % 7
+    start_date = today - timedelta(days=days_since_sunday + (safe_offset * 7))
+    end_date = start_date + timedelta(days=6)
+    rows, total_seconds = build_attendance_period_rows(records, start_date, end_date)
+    return {
+        "view": "weekly",
+        "label": f"{start_date.strftime('%B %-d') if os.name != 'nt' else start_date.strftime('%B %#d')} – {end_date.strftime('%B %-d, %Y') if os.name != 'nt' else end_date.strftime('%B %#d, %Y')}",
+        "periodText": "Week",
+        "rows": rows,
+        "total": format_attendance_duration(total_seconds),
     }
 
 cors_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").split(",") if origin.strip()]
@@ -650,7 +1039,77 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup() -> None:
-    Base.metadata.create_all(bind=engine)
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql("SELECT 1")
+        Base.metadata.create_all(bind=engine)
+        with engine.begin() as connection:
+            column_exists = connection.exec_driver_sql(
+                """
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'leave_requests'
+                  AND column_name = 'approval_stage'
+                """
+            ).scalar_one()
+            if not column_exists:
+                connection.exec_driver_sql(
+                    "ALTER TABLE leave_requests ADD COLUMN approval_stage VARCHAR(40) NOT NULL DEFAULT 'department_head' AFTER status"
+                )
+
+            position_stage_exists = connection.exec_driver_sql(
+                """
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'position_change_requests'
+                  AND column_name = 'approval_stage'
+                """
+            ).scalar_one()
+            if not position_stage_exists:
+                connection.exec_driver_sql(
+                    "ALTER TABLE position_change_requests ADD COLUMN approval_stage VARCHAR(40) NOT NULL DEFAULT 'hr_evaluator' AFTER status"
+                )
+                connection.exec_driver_sql(
+                    "UPDATE position_change_requests SET approval_stage = 'completed' WHERE status IN ('Approved', 'Rejected')"
+                )
+
+            file_content_type = connection.exec_driver_sql(
+                """
+                SELECT LOWER(data_type)
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'profile_documents'
+                  AND column_name = 'file_content'
+                """
+            ).scalar_one_or_none()
+            if file_content_type and file_content_type != 'longblob':
+                connection.exec_driver_sql(
+                    "ALTER TABLE profile_documents MODIFY COLUMN file_content LONGBLOB NULL"
+                )
+    except SQLAlchemyError as exc:
+        raise RuntimeError(
+            "Unable to connect to the database. Check DATABASE_URL, ensure MySQL is running, and create the hrers_project database before starting the app."
+        ) from exc
+
+    # ── Backfill attendance records for already-approved leave requests ──
+    # Idempotent: only creates/updates records that don't already have a clock-in.
+    try:
+        _db = SessionLocal()
+        try:
+            approved_leaves = (
+                _db.query(LeaveRequest)
+                .filter(LeaveRequest.status == LeaveStatus.approved)
+                .all()
+            )
+            for leave in approved_leaves:
+                apply_leave_to_attendance(_db, leave)
+            _db.commit()
+        finally:
+            _db.close()
+    except Exception:
+        pass  # Non-fatal: backfill will retry on next startup
 
 
 @app.get("/health")
@@ -665,17 +1124,17 @@ def root() -> RedirectResponse:
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
-    return templates.TemplateResponse("login/login.html", {"request": request})
+    return templates.TemplateResponse(request, "login/login.html", {})
 
 
 @app.get("/forgot-password", response_class=HTMLResponse)
 def forgot_password_page(request: Request):
-    return templates.TemplateResponse("login/forpass.html", {"request": request})
+    return templates.TemplateResponse(request, "login/forpass.html", {})
 
 
 @app.get("/change-password", response_class=HTMLResponse)
 def change_password_page(request: Request):
-    return templates.TemplateResponse("login/changepass.html", {"request": request})
+    return templates.TemplateResponse(request, "login/changepass.html", {})
 
 
 @app.get("/dashboard/admin", response_class=HTMLResponse)
@@ -716,11 +1175,11 @@ def employee_dashboard_page(
 
 
 @app.get("/templates/{section}/{page_name}", response_class=HTMLResponse)
-def protected_template_page(
+def public_template_page(
     section: str,
     page_name: str,
     request: Request,
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_current_user_optional),
 ):
     normalized_name = page_name if page_name.endswith(".html") else f"{page_name}.html"
 
@@ -736,7 +1195,13 @@ def protected_template_page(
     if not candidate_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Page not found")
 
-    ensure_role_access(candidate_section, current_user.role)
+    # Public sections (like "application") don't require authentication
+    if candidate_section not in PUBLIC_SECTIONS:
+        # Protected sections require authentication and role validation
+        if current_user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+        ensure_role_access(candidate_section, current_user.role)
+    
     return render_role_page(request, candidate_section, normalized_name)
 
 
@@ -744,7 +1209,7 @@ def protected_template_page(
 def protected_flat_template_page(
     page_name: str,
     request: Request,
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_current_user_optional),
 ):
     normalized_name = page_name if page_name.endswith(".html") else f"{page_name}.html"
     prefixed_section = resolve_prefixed_section(normalized_name)
@@ -755,7 +1220,13 @@ def protected_flat_template_page(
     if not candidate_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Page not found")
 
-    ensure_role_access(prefixed_section, current_user.role)
+    # Public sections (like "application") don't require authentication
+    if prefixed_section not in PUBLIC_SECTIONS:
+        # Protected sections require authentication and role validation
+        if current_user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+        ensure_role_access(prefixed_section, current_user.role)
+    
     return render_role_page(request, prefixed_section, normalized_name)
 
 
@@ -888,6 +1359,92 @@ async def update_profile_me(
     db.refresh(current_user)
     return {"message": "Profile updated successfully.", "profile": build_profile_payload(current_user, db)}
 
+@app.get("/api/employment-history")
+def get_employment_history(
+    user_id: int | None = None,
+    all: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+
+    # =========================
+    # BASE QUERY (JOIN USER)
+    # =========================
+    query = (
+        db.query(EmploymentHistory, User)
+        .join(User, User.id == EmploymentHistory.user_id)
+    )
+
+    # =========================
+    # ROLE-BASED ACCESS
+    # =========================
+
+    # EMPLOYEE → only own history
+    if current_user.role == UserRole.employee:
+        query = query.filter(
+            EmploymentHistory.user_id == int(current_user.id)
+        )
+
+    # HR / ADMIN / HEAD ROLES
+    elif current_user.role in {
+    UserRole.department_head,
+    UserRole.hr_evaluator,
+    UserRole.hr_head,
+    UserRole.admin,
+    UserRole.school_director,
+}:
+
+        if user_id:
+            query = query.filter(
+                EmploymentHistory.user_id == int(user_id)
+            )
+
+        elif all:
+            pass  # return all
+
+        else:
+            query = query.filter(
+                EmploymentHistory.user_id == int(current_user.id)
+            )
+
+    # BLOCK OTHERS
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not allowed to access employment history",
+        )
+
+    # =========================
+    # EXECUTE QUERY
+    # =========================
+    rows = (
+        query.order_by(
+            EmploymentHistory.event_date.desc(),
+            EmploymentHistory.id.desc(),
+        )
+        .all()
+    )
+
+    # =========================
+    # FORMAT RESPONSE
+    # =========================
+    results = []
+
+    for history, user in rows:
+        results.append({
+            "id": history.id,
+            "user_id": history.user_id,
+            "employee_name": user.full_name if user else "Unknown",
+            "event_title": history.event_title,
+            "event_description": history.event_description,
+            "event_date": (
+                history.event_date.isoformat()
+                if history.event_date else None
+            ),
+            "role": user.role.value if user and hasattr(user.role, "value") else str(user.role) if user else None
+        })
+   
+    return {"items": results}
 
 @app.post("/api/profile/documents")
 async def upload_profile_document(
@@ -952,9 +1509,26 @@ async def review_profile_document(
     return {"message": "Document updated successfully.", "document": profile_document_to_payload(document)}
 
 
+def get_media_type(file_ext: str) -> str:
+    """Determine media type based on file extension"""
+    media_types = {
+        "pdf": "application/pdf",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png",
+        "gif": "image/gif",
+        "webp": "image/webp",
+        "doc": "application/msword",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "txt": "text/plain",
+    }
+    return media_types.get(file_ext.lower(), "application/octet-stream")
+
+
 @app.get("/api/profile/documents/{document_id}/download")
 async def download_profile_document(
     document_id: int,
+    mode: str = "attachment",  # 'attachment' for download, 'inline' for view
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -964,29 +1538,109 @@ async def download_profile_document(
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    if document.user_id != int(current_user.id) and current_user.role not in (
-        UserRole.admin,
-        UserRole.school_director,
-        UserRole.hr_evaluator,
-        UserRole.hr_head,
-    ):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this document")
+    if document.user_id != int(current_user.id):
+        if current_user.role in (
+            UserRole.admin,
+            UserRole.school_director,
+            UserRole.hr_evaluator,
+            UserRole.hr_head,
+        ):
+            pass
+        elif current_user.role == UserRole.department_head:
+            document_owner = db.query(User).filter(User.id == int(document.user_id)).first()
+            if not document_owner or not can_department_head_access_employee(current_user, document_owner, db):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this document")
+        else:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this document")
 
     if not document.file_content:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file not found")
 
-    safe_filename = document.document_name.replace('"', "").replace("\\", "").replace("/", "")
-    file_ext = document.document_type.lower() if document.document_type else "bin"
-    if file_ext in ("pdf", "jpg", "jpeg", "png", "doc", "docx"):
-        filename = f"{safe_filename}.{file_ext}"
+    filename, media_type = infer_profile_document_file_metadata(document)
+    
+    # Determine Content-Disposition based on mode parameter
+    if mode.lower() == "inline":
+        disposition = f"inline; filename={filename}"
     else:
-        filename = safe_filename
+        disposition = f"attachment; filename={filename}"
 
     return StreamingResponse(
         iter([document.file_content]),
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        media_type=media_type,
+        headers={"Content-Disposition": disposition},
     )
+
+
+@app.get("/api/profile/documents")
+async def get_profile_documents(
+    user_id: int | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retrieve all documents for the current user or a specific user (if authorized)"""
+    # If user_id is provided, check authorization
+    if user_id:
+        # Only HR, Admin, School Director, and Department Head can view other users' documents
+        is_authorized = current_user.role in (
+            UserRole.admin,
+            UserRole.school_director,
+            UserRole.hr_evaluator,
+            UserRole.hr_head,
+            UserRole.department_head,
+        )
+        
+        if not is_authorized and int(current_user.id) != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to view these documents"
+            )
+
+        if current_user.role == UserRole.department_head and int(current_user.id) != user_id:
+            target_user = db.query(User).filter(User.id == int(user_id), User.role == UserRole.employee).first()
+            if not target_user or not can_department_head_access_employee(current_user, target_user, db):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You do not have permission to view these documents"
+                )
+        
+        target_user_id = user_id
+    else:
+        # Default to current user's documents
+        target_user_id = int(current_user.id)
+    
+    documents = db.query(ProfileDocument).filter(ProfileDocument.user_id == target_user_id).all()
+    return {
+        "documents": [profile_document_to_payload(doc) for doc in documents],
+        "count": len(documents),
+    }
+
+
+@app.delete("/api/profile/documents/{document_id}")
+async def delete_profile_document(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    document = db.query(ProfileDocument).filter(ProfileDocument.id == document_id).first()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    # Allow deletion by document owner or authorized reviewers (HR/Head/Admin/SD)
+    is_owner = document.user_id == int(current_user.id)
+    is_authorized = current_user.role in (
+        UserRole.admin,
+        UserRole.school_director,
+        UserRole.hr_evaluator,
+        UserRole.hr_head,
+    )
+
+    if not (is_owner or is_authorized):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to delete this document")
+
+    db.delete(document)
+    db.commit()
+
+    return {"message": "Document deleted successfully."}
 
 
 @app.get("/roles")
@@ -1022,6 +1676,8 @@ async def create_leave_request(
 
     num_days = (end_date_val - start_date_val).days + 1
 
+    approval_stage, review_remarks = initial_leave_approval_stage(current_user)
+
     leave_request = LeaveRequest(
         requester_user_id=int(current_user.id),
         requester_name=str(current_user.full_name),
@@ -1031,11 +1687,12 @@ async def create_leave_request(
         end_date=end_date_val,
         num_days=num_days,
         status=LeaveStatus.pending,
+        approval_stage=approval_stage,
         reason=reason,
         file_name=file_name,
         reviewed_by_user_id=None,
         reviewed_by_name=None,
-        review_remarks="Awaiting review.",
+        review_remarks=review_remarks,
     )
     db.add(leave_request)
     db.commit()
@@ -1068,11 +1725,34 @@ def list_leave_requests(
 
     if mode.lower() == "active":
         query = query.filter(LeaveRequest.status == LeaveStatus.pending)
+        if role == UserRole.department_head:
+            query = query.filter(
+                or_(
+                    LeaveRequest.approval_stage == LeaveApprovalStage.department_head.value,
+                    LeaveRequest.requester_user_id == int(current_user.id),
+                )
+            )
+        elif role == UserRole.hr_evaluator:
+            query = query.filter(
+                or_(
+                    LeaveRequest.approval_stage == LeaveApprovalStage.hr.value,
+                    LeaveRequest.requester_user_id == int(current_user.id),
+                )
+            )
+        elif role == UserRole.hr_head:
+            query = query.filter(
+                or_(
+                    LeaveRequest.approval_stage.in_([LeaveApprovalStage.hr.value, LeaveApprovalStage.hr_head.value]),
+                    LeaveRequest.requester_user_id == int(current_user.id),
+                )
+            )
+        elif role == UserRole.school_director:
+            query = query.filter(LeaveRequest.approval_stage == LeaveApprovalStage.school_director.value)
     elif mode.lower() == "history":
         query = query.filter(LeaveRequest.status.in_([LeaveStatus.approved, LeaveStatus.rejected]))
 
     items = query.order_by(LeaveRequest.created_at.desc()).all()
-    return {"items": [leave_to_payload(item) for item in items]}
+    return {"items": [leave_to_payload(item, current_user) for item in items]}
 
 
 @app.get("/api/leave-credits")
@@ -1097,7 +1777,7 @@ def get_leave_request(
     if role == UserRole.employee and item.requester_user_id != int(current_user.id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
 
-    return leave_to_payload(item)
+    return leave_to_payload(item, current_user)
 
 
 @app.post("/api/leave-requests/{leave_id}/decision")
@@ -1121,13 +1801,107 @@ async def decide_leave_request(
     if decision_raw not in {"approved", "rejected"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid decision")
 
-    item.status = LeaveStatus.approved if decision_raw == "approved" else LeaveStatus.rejected
-    item.reviewed_by_user_id = int(current_user.id)
-    item.reviewed_by_name = str(current_user.full_name)
-    item.review_remarks = remarks or f"{item.status.value} by {current_user.full_name} on {date.today().isoformat()}."
+    approval_stage = str(item.approval_stage or LeaveApprovalStage.department_head.value)
+    today_text = date.today().isoformat()
+
+    if approval_stage == LeaveApprovalStage.department_head.value:
+        if current_user.role != UserRole.department_head:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to review this request")
+
+        item.reviewed_by_user_id = int(current_user.id)
+        item.reviewed_by_name = str(current_user.full_name)
+        if decision_raw == "approved":
+            item.approval_stage = LeaveApprovalStage.hr.value
+            item.review_remarks = remarks or (
+                f"Approved by Department Head {current_user.full_name} on {today_text}. Awaiting HR review."
+            )
+            message = "Request forwarded to HR."
+        else:
+            item.status = LeaveStatus.rejected
+            item.approval_stage = LeaveApprovalStage.completed.value
+            item.review_remarks = remarks or f"Rejected by Department Head {current_user.full_name} on {today_text}."
+            message = "Request rejected."
+    elif approval_stage == LeaveApprovalStage.hr.value:
+        if current_user.role not in {UserRole.hr_evaluator, UserRole.hr_head}:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to review this request")
+
+        item.reviewed_by_user_id = int(current_user.id)
+        item.reviewed_by_name = str(current_user.full_name)
+        if str(item.requester_role) == UserRole.department_head.value:
+            if decision_raw == "approved":
+                item.approval_stage = LeaveApprovalStage.school_director.value
+                item.review_remarks = remarks or (
+                    f"Approved by HR {current_user.full_name} on {today_text}. Awaiting School Director review."
+                )
+                message = "Request forwarded to School Director."
+            else:
+                item.status = LeaveStatus.rejected
+                item.approval_stage = LeaveApprovalStage.completed.value
+                item.review_remarks = remarks or f"Rejected by HR {current_user.full_name} on {today_text}."
+                message = "Request rejected."
+        elif str(item.requester_role) == UserRole.hr_evaluator.value:
+            if decision_raw == "approved":
+                item.approval_stage = LeaveApprovalStage.hr_head.value
+                item.review_remarks = remarks or (
+                    f"Reviewed by HR {current_user.full_name} on {today_text}. Awaiting HR Head approval."
+                )
+                message = "Request forwarded to HR Head."
+            else:
+                item.status = LeaveStatus.rejected
+                item.approval_stage = LeaveApprovalStage.completed.value
+                item.review_remarks = remarks or f"Rejected by HR {current_user.full_name} on {today_text}."
+                message = "Request rejected."
+        else:
+            if decision_raw == "approved":
+                item.status = LeaveStatus.approved
+                item.approval_stage = LeaveApprovalStage.completed.value
+                item.review_remarks = remarks or f"Approved by HR {current_user.full_name} on {today_text}."
+                apply_leave_to_attendance(db, item)
+                message = "Request approved."
+            else:
+                item.status = LeaveStatus.rejected
+                item.approval_stage = LeaveApprovalStage.completed.value
+                item.review_remarks = remarks or f"Rejected by HR {current_user.full_name} on {today_text}."
+                message = "Request rejected."
+    elif approval_stage == LeaveApprovalStage.hr_head.value:
+        if current_user.role != UserRole.hr_head:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to review this request")
+
+        item.reviewed_by_user_id = int(current_user.id)
+        item.reviewed_by_name = str(current_user.full_name)
+        if decision_raw == "approved":
+            item.approval_stage = LeaveApprovalStage.school_director.value
+            item.review_remarks = remarks or (
+                f"Approved by HR Head {current_user.full_name} on {today_text}. Awaiting School Director review."
+            )
+            message = "Request forwarded to School Director."
+        else:
+            item.status = LeaveStatus.rejected
+            item.approval_stage = LeaveApprovalStage.completed.value
+            item.review_remarks = remarks or f"Rejected by HR Head {current_user.full_name} on {today_text}."
+            message = "Request rejected."
+    elif approval_stage == LeaveApprovalStage.school_director.value:
+        if current_user.role != UserRole.school_director:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to review this request")
+
+        item.reviewed_by_user_id = int(current_user.id)
+        item.reviewed_by_name = str(current_user.full_name)
+        if decision_raw == "approved":
+            item.status = LeaveStatus.approved
+            item.approval_stage = LeaveApprovalStage.completed.value
+            item.review_remarks = remarks or f"Approved by School Director {current_user.full_name} on {today_text}."
+            apply_leave_to_attendance(db, item)
+            message = "Request approved."
+        else:
+            item.status = LeaveStatus.rejected
+            item.approval_stage = LeaveApprovalStage.completed.value
+            item.review_remarks = remarks or f"Rejected by School Director {current_user.full_name} on {today_text}."
+            message = "Request rejected."
+    else:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to review this request")
     db.commit()
     db.refresh(item)
-    return {"message": f"Request {item.status.value.lower()}.", "leave": leave_to_payload(item)}
+    return {"message": message, "leave": leave_to_payload(item, current_user)}
 
 
 @app.get("/accounts/get-user-data/{user_id}/")
@@ -1619,12 +2393,21 @@ def list_employee_directory(
     current_user: User = Depends(require_roles(UserRole.admin, UserRole.school_director, UserRole.hr_evaluator, UserRole.hr_head, UserRole.department_head)),
     db: Session = Depends(get_db),
 ):
-    users = (
-        db.query(User)
-        .filter(User.role == UserRole.employee)
-        .order_by(User.full_name.asc())
-        .all()
-    )
+    # Broaden scope for HR and SD
+    if current_user.role in {UserRole.admin, UserRole.school_director, UserRole.hr_evaluator, UserRole.hr_head}:
+        users = (
+            db.query(User)
+            .filter(User.role != UserRole.admin, User.id != int(current_user.id))
+            .order_by(User.full_name.asc())
+            .all()
+        )
+    else:
+        users = (
+            db.query(User)
+            .filter(User.role == UserRole.employee)
+            .order_by(User.full_name.asc())
+            .all()
+        )
 
     # Restrict listing for department heads to their own department
     if current_user.role == UserRole.department_head:
@@ -1694,6 +2477,26 @@ def list_employees(
             users = []
 
     return {"items": [build_employee_detail_payload(user, db) for user in users]}
+
+
+@app.get("/api/positions")
+def list_positions(db: Session = Depends(get_db)):
+    # Fetch unique positions from PositionChangeRequest
+    positions_from_requests = db.query(PositionChangeRequest.current_position).distinct().all()
+    requested_positions = db.query(PositionChangeRequest.requested_position).distinct().all()
+    
+    unique_positions = set()
+    for (p,) in positions_from_requests:
+        if p: unique_positions.add(str(p).strip())
+    for (p,) in requested_positions:
+        if p: unique_positions.add(str(p).strip())
+        
+    # Add default roles (formatted)
+    for role in UserRole:
+        unique_positions.add(str(role.value).replace("_", " ").title())
+        
+    sorted_positions = sorted(list(unique_positions))
+    return {"items": sorted_positions}
 
 
 @app.get("/api/employees/{employee_id}")
@@ -1842,9 +2645,31 @@ async def create_position_request(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Only employees may file a position change request
+    if current_user.role != UserRole.employee:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only employees may file a position change request.",
+        )
+
+    # Block if the employee already has an active (pending) request
+    existing_pending = (
+        db.query(PositionChangeRequest)
+        .filter(
+            PositionChangeRequest.requester_user_id == int(current_user.id),
+            PositionChangeRequest.status == PositionChangeStatus.pending,
+        )
+        .first()
+    )
+    if existing_pending:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You already have a pending position change request. Please wait for it to be resolved before submitting a new one.",
+        )
+
     form = await request.form()
-    employee_name = str(form.get("employee_name") or "").strip() or str(current_user.full_name)
-    employee_no = str(form.get("employee_no") or "").strip() or None
+    employee_name = str(current_user.full_name)  # always use the authenticated user's name
+    employee_no = str(current_user.employee_no or "").strip() or None
     current_position = str(form.get("current_position") or "").strip() or None
     current_department = str(form.get("current_department") or "").strip() or None
     requested_position = str(form.get("requested_position") or "").strip()
@@ -1866,9 +2691,10 @@ async def create_position_request(
         effective_date=effective_date,
         reason=reason,
         status=PositionChangeStatus.pending,
+        approval_stage=PositionChangeApprovalStage.hr_evaluator.value,
         reviewed_by_user_id=None,
         reviewed_by_name=None,
-        review_remarks="Awaiting review.",
+        review_remarks="Awaiting HR Evaluator review.",
     )
     db.add(item)
     db.commit()
@@ -1885,8 +2711,12 @@ def list_position_requests(
 ):
     query = db.query(PositionChangeRequest)
 
+    # Role-based filtering: employees see only their own, HR/SD see all
     if current_user.role == UserRole.employee:
         query = query.filter(PositionChangeRequest.requester_user_id == int(current_user.id))
+    elif current_user.role == UserRole.department_head:
+        # Department Head cannot access position change requests
+        return {"items": []}
 
     if employee:
         query = query.filter(PositionChangeRequest.employee_name.ilike(employee))
@@ -1924,41 +2754,205 @@ async def decide_position_request(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Only HR Evaluator, HR Head, and School Director can review position requests
+    if current_user.role not in {UserRole.hr_evaluator, UserRole.hr_head, UserRole.school_director}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only HR Evaluator, HR Head, or School Director may review position requests.",
+        )
+
     item = db.query(PositionChangeRequest).filter(PositionChangeRequest.id == request_id).first()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Position request not found")
 
-    if not can_review_position_request(current_user, item):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to review this request")
+    # Reviewer cannot review their own request
+    if item.requester_user_id == int(current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You cannot review your own position change request.",
+        )
+
+    # Request must still be pending
+    if item.status != PositionChangeStatus.pending:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This request has already been resolved and can no longer be reviewed.",
+        )
+
+    approval_stage = str(item.approval_stage or PositionChangeApprovalStage.hr_evaluator.value)
+
+    # Strictly enforce stage-to-role: each role may only act on their own stage
+    if approval_stage == PositionChangeApprovalStage.hr_evaluator.value:
+        if current_user.role != UserRole.hr_evaluator:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This request is awaiting HR Evaluator review. Only an HR Evaluator can act on it at this stage.",
+            )
+    elif approval_stage == PositionChangeApprovalStage.hr_head.value:
+        if current_user.role != UserRole.hr_head:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This request is awaiting HR Head review. Only an HR Head can act on it at this stage.",
+            )
+    elif approval_stage == PositionChangeApprovalStage.school_director.value:
+        if current_user.role != UserRole.school_director:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This request is awaiting School Director review. Only the School Director can act on it at this stage.",
+            )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This request is no longer pending review.",
+        )
 
     form = await request.form()
     decision_raw = str(form.get("decision") or "").strip().lower()
     remarks = str(form.get("remarks") or "").strip()
 
     if decision_raw not in {"approved", "rejected"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid decision")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Decision must be 'approved' or 'rejected'.")
 
-    item.status = PositionChangeStatus.approved if decision_raw == "approved" else PositionChangeStatus.rejected
-    item.reviewed_by_user_id = int(current_user.id)
-    item.reviewed_by_name = str(current_user.full_name)
-    item.review_remarks = remarks or f"{item.status.value} by {current_user.full_name} on {date.today().isoformat()}."
+    today_text = date.today().isoformat()
+
+    # ── Stage 1: HR Evaluator ──────────────────────────────────────────────────
+    if approval_stage == PositionChangeApprovalStage.hr_evaluator.value:
+        item.reviewed_by_user_id = int(current_user.id)
+        item.reviewed_by_name = str(current_user.full_name)
+        if decision_raw == "approved":
+            # Advance to HR Head stage
+            item.approval_stage = PositionChangeApprovalStage.hr_head.value
+            item.review_remarks = remarks or f"Approved by HR Evaluator {current_user.full_name} on {today_text}. Awaiting HR Head review."
+            message = "Request forwarded to HR Head."
+        else:
+            item.status = PositionChangeStatus.rejected
+            item.approval_stage = PositionChangeApprovalStage.completed.value
+            item.review_remarks = remarks or f"Rejected by HR Evaluator {current_user.full_name} on {today_text}."
+            message = "Request rejected."
+
+    # ── Stage 2: HR Head ──────────────────────────────────────────────────────
+    elif approval_stage == PositionChangeApprovalStage.hr_head.value:
+        item.reviewed_by_user_id = int(current_user.id)
+        item.reviewed_by_name = str(current_user.full_name)
+        if decision_raw == "approved":
+            # Advance to School Director stage
+            item.approval_stage = PositionChangeApprovalStage.school_director.value
+            item.review_remarks = remarks or f"Approved by HR Head {current_user.full_name} on {today_text}. Awaiting School Director review."
+            message = "Request forwarded to School Director."
+        else:
+            item.status = PositionChangeStatus.rejected
+            item.approval_stage = PositionChangeApprovalStage.completed.value
+            item.review_remarks = remarks or f"Rejected by HR Head {current_user.full_name} on {today_text}."
+            message = "Request rejected."
+
+    # ── Stage 3: School Director (Final) ─────────────────────────────────────
+    elif approval_stage == PositionChangeApprovalStage.school_director.value:
+        item.reviewed_by_user_id = int(current_user.id)
+        item.reviewed_by_name = str(current_user.full_name)
+        if decision_raw == "approved":
+            # Fully approved — update employee's position on their profile record
+            item.status = PositionChangeStatus.approved
+            item.approval_stage = PositionChangeApprovalStage.completed.value
+            item.current_position = item.requested_position
+            item.review_remarks = remarks or (
+                f"Fully approved by School Director {current_user.full_name} on {today_text}. "
+                f"Position updated to {item.requested_position}."
+            )
+            message = "Request fully approved. Employee position updated."
+        else:
+            item.status = PositionChangeStatus.rejected
+            item.approval_stage = PositionChangeApprovalStage.completed.value
+            item.review_remarks = remarks or f"Rejected by School Director {current_user.full_name} on {today_text}."
+            message = "Request rejected."
+
     db.commit()
     db.refresh(item)
-    return {"message": f"Request {item.status.value.lower()}.", "request": position_change_to_payload(item)}
+    return {"message": message, "request": position_change_to_payload(item)}
 
 
 @app.get("/api/reports/kpi")
-def reports_kpi(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def reports_kpi(department: str = "all", current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     today = date.today()
-    total_employees = db.query(User).filter(User.role == UserRole.employee, User.is_active == True).count()
-    approved_leaves = db.query(LeaveRequest).filter(LeaveRequest.status == LeaveStatus.approved).count()
-    total_leaves = db.query(LeaveRequest).count()
-    pending_position_changes = db.query(PositionChangeRequest).filter(PositionChangeRequest.status == PositionChangeStatus.pending).count()
+
+    # ── Scope to dept head's department ──────────────────────────────
+    if current_user.role == UserRole.department_head:
+        dept_name = get_head_department_name(current_user, db)
+        all_active_users = db.query(User).filter(User.is_active == True).all()
+        dept_users = [
+            u for u in all_active_users
+            if u.role == UserRole.employee and get_user_department_name(u, db) == dept_name
+        ] if dept_name else []
+        dept_employee_ids = [int(u.id) for u in dept_users]
+        total_employees = len(dept_users)
+
+        present_today = (
+            db.query(AttendanceRecord.user_id)
+            .filter(
+                AttendanceRecord.user_id.in_(dept_employee_ids),
+                AttendanceRecord.record_date == today,
+                AttendanceRecord.status.in_([AttendanceStatus.present, AttendanceStatus.late]),
+            )
+            .distinct()
+            .count()
+        ) if dept_employee_ids else 0
+
+        on_leave_today = (
+            db.query(AttendanceRecord.user_id)
+            .filter(
+                AttendanceRecord.user_id.in_(dept_employee_ids),
+                AttendanceRecord.record_date == today,
+                AttendanceRecord.status == AttendanceStatus.leave,
+            )
+            .distinct()
+            .count()
+        ) if dept_employee_ids else 0
+
+        attendance_rate = round((present_today / total_employees) * 100, 1) if total_employees else 0.0
+
+        return {
+            "totalEmployees": total_employees,
+            "presentToday": present_today,
+            "onLeaveToday": on_leave_today,
+            "attendanceRate": attendance_rate,
+            "summary": {},
+        }
+
+    # ── Global view for other roles ───────────────────────────────────
+    # Broaden scope to include all active users except themselves and admins
+    user_query = db.query(User).filter(
+        User.role != UserRole.admin,
+        User.id != int(current_user.id),
+        User.is_active == True
+    )
+    
+    if department != "all":
+        # We need to filter users by department name
+        # Since department is stored in PositionChangeRequest, we can join or filter manually
+        all_users = user_query.all()
+        needle = department.strip().lower()
+        target_user_ids = [int(u.id) for u in all_users if needle in get_user_department_name(u, db).lower()]
+        total_employees = len(target_user_ids)
+    else:
+        total_employees = user_query.count()
+        target_user_ids = [int(u.id) for u in user_query.all()]
+
+    approved_leaves = db.query(LeaveRequest).filter(
+        LeaveRequest.status == LeaveStatus.approved,
+        LeaveRequest.requester_user_id.in_(target_user_ids)
+    ).count()
+    total_leaves = db.query(LeaveRequest).filter(
+        LeaveRequest.requester_user_id.in_(target_user_ids)
+    ).count()
+    pending_position_changes = db.query(PositionChangeRequest).filter(
+        PositionChangeRequest.status == PositionChangeStatus.pending,
+        PositionChangeRequest.requester_user_id.in_(target_user_ids)
+    ).count()
     total_departments = db.query(Department).filter(Department.is_active == True).count()
 
     present_today = (
         db.query(AttendanceRecord.user_id)
         .filter(
+            AttendanceRecord.user_id.in_(target_user_ids),
             AttendanceRecord.record_date == today,
             AttendanceRecord.status.in_([AttendanceStatus.present, AttendanceStatus.late]),
         )
@@ -1970,15 +2964,13 @@ def reports_kpi(current_user: User = Depends(get_current_user), db: Session = De
     approved_position_changes = db.query(PositionChangeRequest).filter(PositionChangeRequest.status == PositionChangeStatus.approved).count()
     turnover_rate = round((approved_position_changes / total_employees) * 100, 2) if total_employees else 0.0
 
-    completed_trainings = db.query(TrainingSession).filter(TrainingSession.status == TrainingStatus.completed).count()
-    total_trainings = db.query(TrainingSession).count()
-    avg_performance = round((completed_trainings / total_trainings) * 10, 1) if total_trainings else 0.0
+
 
     return {
         "totalEmployees": total_employees,
         "attendanceRate": attendance_rate,
         "turnoverRate": turnover_rate,
-        "avgPerformance": avg_performance,
+
         "summary": {
             "approvedLeaves": approved_leaves,
             "totalLeaves": total_leaves,
@@ -1988,16 +2980,20 @@ def reports_kpi(current_user: User = Depends(get_current_user), db: Session = De
     }
 
 
-def build_report_rows(report_type: str, school: str, db: Session) -> list[dict[str, str]]:
-    users = db.query(User).all()
+def build_report_rows(report_type: str, department: str, db: Session, current_user: User = None) -> list[dict[str, str]]:
+    query = db.query(User).filter(User.is_active == True)
+    if current_user:
+        query = query.filter(User.role != UserRole.admin, User.id != int(current_user.id))
+    users = query.all()
     rows: list[dict[str, str]] = []
 
     for user in users:
+        dept_name = get_user_department_name(user, db)
         rows.append(
             {
                 "employee-id": str(user.employee_no or f"EMP-{user.id:04d}"),
                 "name": str(user.full_name),
-                "school": str(user.role.value).replace("_", " ").title(),
+                "department": dept_name,
                 "email": str(user.email),
                 "phone": "N/A",
                 "salary": "N/A",
@@ -2007,9 +3003,9 @@ def build_report_rows(report_type: str, school: str, db: Session) -> list[dict[s
             }
         )
 
-    if school and school != "all":
-        needle = school.replace("-", " ").lower()
-        rows = [row for row in rows if needle in row["school"].lower()]
+    if department and department != "all":
+        needle = department.strip().lower()
+        rows = [row for row in rows if needle in row["department"].lower()]
 
     return rows[:100]
 
@@ -2105,22 +3101,86 @@ def format_relative_time(value: datetime | None) -> str:
 
 
 @app.get("/api/reports/charts")
-def reports_chart_data(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def reports_chart_data(department: str = "all", current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     today = date.today()
-    employees = db.query(User).filter(User.role == UserRole.employee, User.is_active == True).all()
+
+    # ── Scope to dept head's department ──────────────────────────────
+    if current_user.role == UserRole.department_head:
+        dept_name = get_head_department_name(current_user, db)
+        all_active = db.query(User).filter(User.is_active == True).all()
+        dept_users = [
+            u for u in all_active
+            if u.role == UserRole.employee and get_user_department_name(u, db) == dept_name
+        ] if dept_name else []
+        dept_ids = [int(u.id) for u in dept_users]
+        total_employees = len(dept_users)
+
+        attendance_labels: list[str] = []
+        attendance_values: list[float] = []
+        for day_offset in range(6, -1, -1):
+            current_day = today - timedelta(days=day_offset)
+            attendance_labels.append(current_day.strftime("%a"))
+            if not dept_ids:
+                attendance_values.append(0.0)
+                continue
+            active_count = (
+                db.query(AttendanceRecord.user_id)
+                .filter(
+                    AttendanceRecord.user_id.in_(dept_ids),
+                    AttendanceRecord.record_date == current_day,
+                    AttendanceRecord.status.in_([AttendanceStatus.present, AttendanceStatus.late]),
+                )
+                .distinct()
+                .count()
+            )
+            attendance_values.append(round((active_count / total_employees) * 100, 2) if total_employees else 0.0)
+
+        on_leave_count = (
+            db.query(AttendanceRecord.user_id)
+            .filter(
+                AttendanceRecord.user_id.in_(dept_ids),
+                AttendanceRecord.record_date == today,
+                AttendanceRecord.status == AttendanceStatus.leave,
+            )
+            .distinct()
+            .count()
+        ) if dept_ids else 0
+
+        return {
+            "attendanceTrend": {"labels": attendance_labels, "data": attendance_values},
+            "statusBreakdown": {
+                "labels": ["Active", "On Leave"],
+                "data": [max(total_employees - on_leave_count, 0), int(on_leave_count)],
+            },
+            "departmentDistribution": {"labels": [], "data": []},
+        }
+
+    # ── Global view for other roles ───────────────────────────────────
+    # Broaden scope to include all active users except themselves and admins
+    user_query = db.query(User).filter(
+        User.role != UserRole.admin,
+        User.id != int(current_user.id),
+        User.is_active == True
+    )
+    
+    if department != "all":
+        all_users = user_query.all()
+        needle = department.strip().lower()
+        employees = [u for u in all_users if needle in get_user_department_name(u, db).lower()]
+    else:
+        employees = user_query.all()
+        
     total_employees = len(employees)
     employee_ids = [int(item.id) for item in employees]
 
-    attendance_labels: list[str] = []
-    attendance_values: list[float] = []
+    attendance_labels = []
+    attendance_values = []
     for day_offset in range(6, -1, -1):
         current_day = today - timedelta(days=day_offset)
         attendance_labels.append(current_day.strftime("%a"))
-
         if not employee_ids:
             attendance_values.append(0.0)
             continue
-
         active_count = (
             db.query(AttendanceRecord.user_id)
             .filter(
@@ -2160,10 +3220,7 @@ def reports_chart_data(current_user: User = Depends(get_current_user), db: Sessi
         department_values = [int(department_counts.get("Unassigned", 0))]
 
     return {
-        "attendanceTrend": {
-            "labels": attendance_labels,
-            "data": attendance_values,
-        },
+        "attendanceTrend": {"labels": attendance_labels, "data": attendance_values},
         "statusBreakdown": {
             "labels": ["Active", "On Leave", "Inactive", "Department Heads"],
             "data": [
@@ -2173,10 +3230,7 @@ def reports_chart_data(current_user: User = Depends(get_current_user), db: Sessi
                 int(department_head_count),
             ],
         },
-        "departmentDistribution": {
-            "labels": department_labels,
-            "data": department_values,
-        },
+        "departmentDistribution": {"labels": department_labels, "data": department_values},
     }
 
 
@@ -2281,6 +3335,12 @@ def list_department_head_candidates(current_user: User = Depends(require_roles(U
     }
 
 
+@app.get("/api/departments")
+def list_departments_public(db: Session = Depends(get_db)):
+    depts = db.query(Department).filter(Department.is_active == True).order_by(Department.name.asc()).all()
+    return {"items": [{"id": d.id, "name": d.name} for d in depts]}
+
+
 @app.get("/api/dashboard/notifications")
 def dashboard_notifications(
     current_user: User = Depends(get_current_user),
@@ -2314,18 +3374,34 @@ def dashboard_notifications(
             }
         )
 
-    recent_positions = position_query.order_by(PositionChangeRequest.updated_at.desc()).limit(2).all()
-    for item in recent_positions:
-        status_value = str(item.status.value or "Pending")
-        notif_type = "success" if status_value == "Approved" else ("warning" if status_value == "Rejected" else "info")
-        notifications.append(
-            {
-                "type": notif_type,
-                "message": f"Position request {status_value.lower()} ({item.requested_position})",
-                "time": format_relative_time(item.updated_at or item.created_at),
-                "_sort": item.updated_at or item.created_at,
-            }
-        )
+    # Position change notifications: show to employees (own), HR evaluator, HR Head, and School Director
+    # Department Head should NOT receive position change notifications
+    if current_user.role in {UserRole.hr_evaluator, UserRole.hr_head, UserRole.school_director}:
+        recent_positions = position_query.order_by(PositionChangeRequest.updated_at.desc()).limit(2).all()
+        for item in recent_positions:
+            status_value = str(item.status.value or "Pending")
+            notif_type = "success" if status_value == "Approved" else ("warning" if status_value == "Rejected" else "info")
+            notifications.append(
+                {
+                    "type": notif_type,
+                    "message": f"Position request {status_value.lower()} ({item.requested_position})",
+                    "time": format_relative_time(item.updated_at or item.created_at),
+                    "_sort": item.updated_at or item.created_at,
+                }
+            )
+    elif current_user.role == UserRole.employee:
+        recent_positions = position_query.order_by(PositionChangeRequest.updated_at.desc()).limit(2).all()
+        for item in recent_positions:
+            status_value = str(item.status.value or "Pending")
+            notif_type = "success" if status_value == "Approved" else ("warning" if status_value == "Rejected" else "info")
+            notifications.append(
+                {
+                    "type": notif_type,
+                    "message": f"Position request {status_value.lower()} ({item.requested_position})",
+                    "time": format_relative_time(item.updated_at or item.created_at),
+                    "_sort": item.updated_at or item.created_at,
+                }
+            )
 
     if current_user.role in {UserRole.hr_evaluator, UserRole.hr_head, UserRole.school_director, UserRole.department_head, UserRole.admin}:
         recent_trainings = training_query.order_by(TrainingSession.updated_at.desc()).limit(1).all()
@@ -2348,23 +3424,23 @@ def dashboard_notifications(
 @app.get("/api/reports/preview")
 def reports_preview(
     reportType: str = "employee-list",
-    school: str = "all",
+    department: str = "all",
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    rows = build_report_rows(reportType, school, db)
+    rows = build_report_rows(reportType, department, db, current_user)
     return {"items": rows, "reportType": reportType}
 
 
 @app.get("/api/reports/export")
 def reports_export(
     reportType: str = "employee-list",
-    school: str = "all",
-    fields: str = "employee-id,name,school,email,phone",
+    department: str = "all",
+    fields: str = "employee-id,name,department,email,phone",
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    rows = build_report_rows(reportType, school, db)
+    rows = build_report_rows(reportType, department, db, current_user)
     field_keys = [field.strip() for field in fields.split(",") if field.strip()]
     if not field_keys:
         field_keys = ["employee-id", "name", "school", "email", "phone"]
@@ -2810,8 +3886,8 @@ def clock_in(
         .filter(AttendanceRecord.user_id == int(current_user.id), AttendanceRecord.record_date == today)
         .first()
     )
-    if record and record.time_in and not record.time_out:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Already clocked in")
+    if record and record.time_in:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Multiple clock-ins are not allowed for the same day")
 
     if not record:
         record = AttendanceRecord(
@@ -2876,6 +3952,151 @@ def attendance_summary(
     return build_weekly_attendance_summary(records, max(0, offset))
 
 
+@app.get("/api/attendance/employee/{employee_id}")
+def get_employee_attendance_details(
+    employee_id: int,
+    view: str = "weekly",
+    offset: int = 0,
+    current_user: User = Depends(require_roles(UserRole.hr_evaluator, UserRole.hr_head, UserRole.department_head, UserRole.school_director, UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    employee = db.query(User).filter(User.id == employee_id, User.role != UserRole.admin).first()
+    if not employee:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+
+    if current_user.role == UserRole.department_head:
+        head_department_name = get_head_department_name(current_user, db)
+        if not head_department_name:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
+        employee_department = get_user_department_name(employee, db)
+        if employee_department != head_department_name:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
+
+    records = (
+        db.query(AttendanceRecord)
+        .filter(AttendanceRecord.user_id == int(employee.id))
+        .order_by(AttendanceRecord.record_date.asc())
+        .all()
+    )
+
+    payload = build_employee_attendance_period_payload(records, view, offset)
+    payload["employee"] = build_employee_detail_payload(employee, db)
+    return payload
+
+
+@app.post("/api/attendance/employee/{employee_id}/record")
+async def update_employee_attendance(
+    employee_id: int,
+    request: Request,
+    current_user: User = Depends(require_roles(UserRole.hr_evaluator, UserRole.hr_head, UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    record_date_str = data.get("isoDate")
+    time_in_str = data.get("timeIn")
+    time_out_str = data.get("timeOut")
+    status_str = data.get("status")
+
+    if not record_date_str or not status_str:
+        raise HTTPException(status_code=400, detail="Missing isoDate or status")
+
+    try:
+        record_date = datetime.strptime(record_date_str, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+
+    employee = db.query(User).filter(User.id == employee_id).first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    record = db.query(AttendanceRecord).filter(
+        AttendanceRecord.user_id == employee_id,
+        AttendanceRecord.record_date == record_date
+    ).first()
+
+    def parse_time(time_str: str | None) -> datetime | None:
+        if not time_str or time_str.strip() == "--":
+            return None
+        # Format might be "%I:%M %p" (e.g. "8:00 AM") or "%H:%M" (e.g. "08:00")
+        try:
+            # Try 12-hour format first
+            try:
+                t = datetime.strptime(time_str.strip(), "%I:%M %p").time()
+            except ValueError:
+                t = datetime.strptime(time_str.strip(), "%H:%M").time()
+            return datetime.combine(record_date, t)
+        except ValueError:
+            return None
+
+    new_time_in = parse_time(time_in_str)
+    new_time_out = parse_time(time_out_str)
+
+    status_map = {
+        "present": AttendanceStatus.present,
+        "late": AttendanceStatus.late,
+        "absent": AttendanceStatus.absent,
+        "leave": AttendanceStatus.leave,
+        "holiday": AttendanceStatus.holiday,
+        "active": AttendanceStatus.present,
+    }
+
+    status_lower = status_str.lower().strip()
+    new_status = status_map.get(status_lower, AttendanceStatus.absent)
+
+    worked_seconds = 0
+    if new_time_in and new_time_out:
+        worked_seconds = max(0, int((new_time_out - new_time_in).total_seconds()))
+
+    if not record:
+        record = AttendanceRecord(
+            user_id=employee_id,
+            record_date=record_date,
+            time_in=new_time_in,
+            time_out=new_time_out,
+            worked_seconds=worked_seconds,
+            status=new_status
+        )
+        db.add(record)
+    else:
+        record.time_in = new_time_in
+        record.time_out = new_time_out
+        record.worked_seconds = worked_seconds
+        record.status = new_status
+
+    db.commit()
+    db.refresh(record)
+    return {"message": "Attendance record updated"}
+
+
+@app.delete("/api/attendance/employee/{employee_id}/record/{record_date_str}")
+async def delete_employee_attendance(
+    employee_id: int,
+    record_date_str: str,
+    current_user: User = Depends(require_roles(UserRole.hr_evaluator, UserRole.hr_head, UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    try:
+        record_date = datetime.strptime(record_date_str, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+
+    record = db.query(AttendanceRecord).filter(
+        AttendanceRecord.user_id == employee_id,
+        AttendanceRecord.record_date == record_date
+    ).first()
+
+    if not record:
+        raise HTTPException(status_code=404, detail="Attendance record not found")
+
+    db.delete(record)
+    db.commit()
+    return {"message": "Attendance record deleted"}
+
+
 @app.get("/api/attendance/monitoring")
 def attendance_monitoring(
     offset: int = 0,
@@ -2889,12 +4110,33 @@ def attendance_monitoring(
     week_start = current_week_start - timedelta(days=safe_offset * 7)
     week_end = week_start + timedelta(days=6)
 
-    employees = (
-        db.query(User)
-        .filter(User.role == UserRole.employee, User.is_active == True)
-        .order_by(User.full_name.asc())
-        .all()
+    all_users = db.query(User).filter(
+        User.role != UserRole.admin,
+        User.is_active == True,
     )
+
+    if current_user.role == UserRole.department_head:
+        head_department_name = get_head_department_name(current_user, db)
+        if not head_department_name:
+            return {
+                "weekOffset": safe_offset,
+                "weekStart": week_start.isoformat(),
+                "weekEnd": week_end.isoformat(),
+                "weekLabel": f"{week_start.strftime('%b')} {week_start.day} - {week_end.strftime('%b')} {week_end.day}, {week_end.year}",
+                "rows": [],
+            }
+
+        employees = [
+            user
+            for user in all_users.order_by(User.full_name.asc()).all()
+            if get_user_department_name(user, db) == head_department_name
+        ]
+    else:
+        employees = (
+            all_users
+            .order_by(User.full_name.asc())
+            .all()
+        )
     employee_ids = [int(user.id) for user in employees]
 
     records = []
@@ -2915,7 +4157,9 @@ def attendance_monitoring(
 
     def get_status_payload(record: AttendanceRecord | None, current_day: date) -> dict[str, str]:
         if not record:
-            return {"status": "none", "label": "", "pillClass": ""}
+            if current_day.weekday() >= 5:
+                return {"status": "day-off", "label": "Day Off", "pillClass": "pill-neutral"}
+            return {"status": "absent", "label": "Absent", "pillClass": "pill-red"}
 
         if record.time_in and not record.time_out and current_day == today:
             return {"status": "active", "label": "Active", "pillClass": "pill-green"}
@@ -2926,9 +4170,15 @@ def attendance_monitoring(
             hours = worked_seconds // 3600
             minutes = (worked_seconds % 3600) // 60
             if worked_seconds > 0:
+                label = f"{hours}h {minutes:02d}m"
+                reg_s = 8 * 3600
+                if worked_seconds > reg_s:
+                    label += " (OT)"
+                elif worked_seconds < reg_s:
+                    label += " (UT)"
                 return {
                     "status": status_value,
-                    "label": f"{hours}h {minutes:02d}m",
+                    "label": label,
                     "pillClass": "pill-tan" if status_value == "late" else "pill-green",
                 }
             return {
@@ -2955,7 +4205,9 @@ def attendance_monitoring(
             .first()
         )
 
-        title = (latest_position.current_position if latest_position and latest_position.current_position else "Employee")
+        # Improve title and department fallbacks for non-employees
+        role_label = str(user.role.value).replace("_", " ").title()
+        title = (latest_position.current_position if latest_position and latest_position.current_position else role_label)
         department = (latest_position.current_department if latest_position and latest_position.current_department else "General")
         employee_no = str(user.employee_no or f"EMP-{int(user.id):03d}")
 
