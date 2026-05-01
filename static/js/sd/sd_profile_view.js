@@ -104,6 +104,7 @@ function applyProfileToView(profile) {
             }).join('');
         }
     }
+}
 
 /* =========================
    LOAD PROFILE (WITH HISTORY AND DOCUMENTS)
@@ -169,4 +170,4 @@ async function loadProfileViewData() {
 document.addEventListener('DOMContentLoaded', () => {
     setupProfileViewPage();
     loadProfileViewData();
-});
+}); 
