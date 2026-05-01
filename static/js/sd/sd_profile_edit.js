@@ -13,54 +13,53 @@ function setupProfileEditPage() {
     if (sidebar && closeBtn) closeBtn.addEventListener('click', () => sidebar.classList.add('close'));
 }
 
-function getBasicInputs() {
-    return document.querySelectorAll('#editEmployeeForm .form-section-box:first-child .input-item input');
+function setValue(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.value = value || '';
 }
 
-function setBasicValue(index, value) {
-    const inputs = getBasicInputs();
-    if (inputs[index]) inputs[index].value = value || '';
+function getAuthHeaders() {
+    const token = localStorage.getItem('hrers_access_token');
+    return token ? { 'Authorization': `Bearer ${token}` } : {};
 }
 
 async function loadProfileEditData() {
     try {
-        const response = await fetch('/api/profile/me');
+        const response = await fetch('/api/profile/me', { headers: getAuthHeaders() });
         if (!response.ok) return;
         const profile = await response.json();
 
-        setBasicValue(0, profile.firstName || '');
-        setBasicValue(1, profile.lastName || '');
-        setBasicValue(2, profile.employeeNo || profile.id || '');
-        setBasicValue(3, profile.isActive ? 'Active' : 'Inactive');
-        setBasicValue(4, profile.employmentType || 'Full-time');
-        setBasicValue(5, profile.department || '');
-        setBasicValue(6, profile.position || profile.roleLabel || '');
-        setBasicValue(7, profile.dateHired || '');
+        setValue('firstName', profile.firstName || '');
+        setValue('lastName', profile.lastName || '');
+        setValue('empID', profile.employeeNo || profile.id || '');
+        setValue('empStatus', profile.isActive ? 'Active' : 'Inactive');
+        setValue('empType', profile.employmentType || 'Full-time');
+        setValue('dept', profile.department || '');
+        setValue('pos', profile.position || profile.roleLabel || '');
+        setValue('dateHired', profile.dateHired || '');
 
-        const email = document.getElementById('email');
-        const contact = document.getElementById('contact');
-        const address = document.getElementById('address');
-        const emergencyName = document.getElementById('emergencyName');
-        const emergencyPhone = document.getElementById('emergencyPhone');
-
-        if (email) email.value = profile.email || '';
-        if (contact) contact.value = profile.contactNumber || '';
-        if (address) address.value = profile.address || '';
-        if (emergencyName) emergencyName.value = profile.emergencyName || '';
-        if (emergencyPhone) emergencyPhone.value = profile.emergencyPhone || '';
+        setValue('email', profile.email || '');
+        setValue('contact', profile.contactNumber || '');
+        setValue('address', profile.address || '');
+        setValue('emergencyName', profile.emergencyName || '');
+        setValue('emergencyPhone', profile.emergencyPhone || '');
     } catch (error) {
     }
 }
 
 async function submitProfileUpdate() {
-    const inputs = getBasicInputs();
     const formData = new FormData();
-    formData.set('firstName', inputs[0]?.value || '');
-    formData.set('lastName', inputs[1]?.value || '');
+    formData.set('firstName', document.getElementById('firstName')?.value || '');
+    formData.set('lastName', document.getElementById('lastName')?.value || '');
     formData.set('email', document.getElementById('email')?.value || '');
+    formData.set('contactNumber', document.getElementById('contact')?.value || '');
+    formData.set('address', document.getElementById('address')?.value || '');
+    formData.set('emergencyName', document.getElementById('emergencyName')?.value || '');
+    formData.set('emergencyPhone', document.getElementById('emergencyPhone')?.value || '');
 
     const response = await fetch('/api/profile/me', {
         method: 'POST',
+        headers: getAuthHeaders(),
         body: formData,
     });
 

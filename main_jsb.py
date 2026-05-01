@@ -334,11 +334,19 @@ def build_profile_payload(current_user: User, db: Session) -> dict[str, str | bo
         "address": str(user_profile.address or "") if user_profile else "",
         "emergencyName": str(user_profile.emergency_name or "") if user_profile else "",
         "emergencyPhone": str(user_profile.emergency_phone or "") if user_profile else "",
+        "departmentInfo": {
+            "id": int(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().id) if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() else None,
+            "name": department_name,
+            "location": str(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().location or "") if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() else "",
+            "email": str(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().email or "") if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() else "",
+            "headName": str(db.query(User).filter(User.id == int(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().head_user_id)).first().full_name) if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().head_user_id and db.query(User).filter(User.id == int(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().head_user_id)).first() else "",
+        },
         "documents": documents,
         "history": history,
         "documentAlerts": document_alerts,
         "documentAlertCount": len(document_alerts),
     }
+
 
 
 def build_employee_directory_payload(user: User, db: Session) -> dict:
@@ -394,6 +402,8 @@ def build_employee_detail_payload(user: User, db: Session) -> dict[str, str | bo
 
     position_name = str((latest_position.current_position if latest_position and latest_position.current_position else None) or str(user.role.value).replace("_", " ").title())
 
+    user_profile = db.query(UserProfile).filter(UserProfile.user_id == int(user.id)).first()
+
     return {
         "id": int(user.id),
         "employeeNo": str(user.employee_no or f"EMP-{int(user.id):03d}"),
@@ -401,6 +411,7 @@ def build_employee_detail_payload(user: User, db: Session) -> dict[str, str | bo
         "firstName": split_name(str(user.full_name))[0],
         "lastName": split_name(str(user.full_name))[1],
         "email": str(user.email),
+        "username": str(user.username),
         "role": str(user.role.value),
         "roleLabel": str(user.role.value).replace("_", " ").title(),
         "department": department_name,
@@ -408,11 +419,19 @@ def build_employee_detail_payload(user: User, db: Session) -> dict[str, str | bo
         "isActive": bool(user.is_active),
         "employmentType": "Full-time",
         "dateHired": user.created_at.strftime("%B %d, %Y") if user.created_at else "",
-        "contactNumber": "",
-        "address": "",
-        "emergencyName": "",
-        "emergencyPhone": "",
+        "contactNumber": (user_profile.contact_number if user_profile else "") or "",
+        "address": (user_profile.address if user_profile else "") or "",
+        "emergencyName": (user_profile.emergency_name if user_profile else "") or "",
+        "emergencyPhone": (user_profile.emergency_phone if user_profile else "") or "",
+        "departmentInfo": {
+            "id": int(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().id) if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() else None,
+            "name": department_name,
+            "location": str(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().location or "") if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() else "",
+            "email": str(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().email or "") if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() else "",
+            "headName": str(db.query(User).filter(User.id == int(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().head_user_id)).first().full_name) if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().head_user_id and db.query(User).filter(User.id == int(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().head_user_id)).first() else "",
+        },
     }
+
 
 
 def get_head_department_name(current_user: User, db: Session) -> str | None:
@@ -2076,7 +2095,7 @@ def get_employee_directory_item(
         if user_dept != str(head_department.name):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
 
-    return build_employee_directory_payload(user, db)
+    return build_employee_detail_payload(user, db)
 
 
 @app.get("/api/positions")

@@ -73,8 +73,19 @@ function applyProfileToView(profile) {
     document.getElementById('contactLocation').textContent =
         profile.address || '--';
 
-    document.getElementById('deptName').textContent =
-        profile.department || '--';
+    // =========================
+    // DEPARTMENT TAB
+    // =========================
+    const deptInfo = profile.departmentInfo || {};
+    const safeSet = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val || '--';
+    };
+    safeSet('deptName', deptInfo.name || profile.department);
+    safeSet('deptCode', deptInfo.id);
+    safeSet('deptLocation', deptInfo.location);
+    safeSet('deptEmail', deptInfo.email);
+    safeSet('deptContact', deptInfo.headName);
 
     // =========================
     // RENDER DOCUMENTS

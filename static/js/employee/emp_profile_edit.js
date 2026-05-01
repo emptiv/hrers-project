@@ -13,6 +13,11 @@ function setupProfileEditPage() {
     if (sidebar && closeBtn) closeBtn.addEventListener('click', () => sidebar.classList.add('close'));
 }
 
+function getAuthHeaders() {
+    const token = localStorage.getItem('hrers_access_token');
+    return token ? { 'Authorization': `Bearer ${token}` } : {};
+}
+
 function setValue(id, value) {
     const el = document.getElementById(id);
     if (el) el.value = value || '';
@@ -61,7 +66,7 @@ function renderUploadedDocuments(documents) {
 
 async function loadProfileEditData() {
     try {
-        const response = await fetch('/api/profile/me');
+        const response = await fetch('/api/profile/me', { headers: getAuthHeaders() });
         if (!response.ok) return;
         const profile = await response.json();
 
@@ -97,6 +102,7 @@ async function submitProfileUpdate() {
 
     const response = await fetch('/api/profile/me', {
         method: 'POST',
+        headers: getAuthHeaders(),
         body: formData,
     });
 
@@ -158,6 +164,7 @@ async function uploadDocument() {
 
     const response = await fetch('/api/profile/documents', {
         method: 'POST',
+        headers: getAuthHeaders(),
         body: formData,
     });
 

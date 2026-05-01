@@ -110,12 +110,24 @@ def render_role_page(request: Request, section: str, filename: str) -> HTMLRespo
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Page not found")
 
     html = template_path.read_text(encoding="utf-8")
-    script_tag = '<script src="/static/js/app_nav_guard.js"></script>'
-    if script_tag not in html:
-        if "</body>" in html:
-            html = html.replace("</body>", f"    {script_tag}\n</body>")
+
+    # Inject api.js (global fetch interceptor) into <head> so it runs BEFORE all page scripts
+    api_script_tag = '<script src="/static/js/api.js"></script>'
+    if api_script_tag not in html:
+        if "</head>" in html:
+            html = html.replace("</head>", f"    {api_script_tag}\n</head>", 1)
+        elif "</body>" in html:
+            html = html.replace("</body>", f"    {api_script_tag}\n</body>", 1)
         else:
-            html += f"\n{script_tag}\n"
+            html = f"{api_script_tag}\n" + html
+
+    # Inject nav guard before </body>
+    nav_script_tag = '<script src="/static/js/app_nav_guard.js"></script>'
+    if nav_script_tag not in html:
+        if "</body>" in html:
+            html = html.replace("</body>", f"    {nav_script_tag}\n</body>", 1)
+        else:
+            html += f"\n{nav_script_tag}\n"
 
     return HTMLResponse(content=html)
 
@@ -329,12 +341,19 @@ def build_profile_payload(current_user: User, db: Session) -> dict[str, str | bo
         "department": department_name,
         "position": position_name,
         "isActive": bool(current_user.is_active),
-        "employmentType": "",
+        "employmentType": "Full-time",
         "dateHired": current_user.created_at.strftime("%B %d, %Y") if current_user.created_at else "",
-        "contactNumber": str(user_profile.contact_number or "") if user_profile else "",
-        "address": str(user_profile.address or "") if user_profile else "",
-        "emergencyName": str(user_profile.emergency_name or "") if user_profile else "",
-        "emergencyPhone": str(user_profile.emergency_phone or "") if user_profile else "",
+        "contactNumber": (user_profile.contact_number if user_profile else "") or "",
+        "address": (user_profile.address if user_profile else "") or "",
+        "emergencyName": (user_profile.emergency_name if user_profile else "") or "",
+        "emergencyPhone": (user_profile.emergency_phone if user_profile else "") or "",
+        "departmentInfo": {
+            "id": int(head_department.id) if current_user.role == UserRole.department_head and head_department else (int(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().id) if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() else None),
+            "name": department_name,
+            "location": str(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().location or "") if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() else "",
+            "email": str(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().email or "") if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() else "",
+            "headName": str(db.query(User).filter(User.id == int(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().head_user_id)).first().full_name) if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().head_user_id and db.query(User).filter(User.id == int(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().head_user_id)).first() else "",
+        },
         "documents": documents,
         "history": history,
         "documentAlerts": document_alerts,
@@ -473,6 +492,8 @@ def build_employee_detail_payload(user: User, db: Session) -> dict[str, str | bo
             }
         )
 
+    user_profile = db.query(UserProfile).filter(UserProfile.user_id == int(user.id)).first()
+
     return {
         "id": int(user.id),
         "employeeNo": str(user.employee_no or f"EMP-{int(user.id):03d}"),
@@ -480,6 +501,7 @@ def build_employee_detail_payload(user: User, db: Session) -> dict[str, str | bo
         "firstName": split_name(str(user.full_name))[0],
         "lastName": split_name(str(user.full_name))[1],
         "email": str(user.email),
+        "username": str(user.username),
         "role": str(user.role.value),
         "roleLabel": str(user.role.value).replace("_", " ").title(),
         "department": department_name,
@@ -487,10 +509,10 @@ def build_employee_detail_payload(user: User, db: Session) -> dict[str, str | bo
         "isActive": bool(user.is_active),
         "employmentType": "Full-time",
         "dateHired": user.created_at.strftime("%B %d, %Y") if user.created_at else "",
-        "contactNumber": "",
-        "address": "",
-        "emergencyName": "",
-        "emergencyPhone": "",
+        "contactNumber": (user_profile.contact_number if user_profile else "") or "",
+        "address": (user_profile.address if user_profile else "") or "",
+        "emergencyName": (user_profile.emergency_name if user_profile else "") or "",
+        "emergencyPhone": (user_profile.emergency_phone if user_profile else "") or "",
         "departmentInfo": {
             "id": int(department_record.id) if department_record else None,
             "name": str(department_record.name) if department_record else department_name,
@@ -2427,9 +2449,9 @@ def get_employee_directory_item(
     current_user: User = Depends(require_roles(UserRole.admin, UserRole.school_director, UserRole.hr_evaluator, UserRole.hr_head, UserRole.department_head)),
     db: Session = Depends(get_db),
 ):
-    user = db.query(User).filter(User.id == employee_id, User.role == UserRole.employee).first()
+    user = db.query(User).filter(User.id == employee_id).first()
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     # If requester is a department head, ensure the employee is in their department
     if current_user.role == UserRole.department_head:
@@ -2446,7 +2468,7 @@ def get_employee_directory_item(
         if user_dept != str(head_department.name):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
 
-    return build_employee_directory_payload(user, db)
+    return build_employee_detail_payload(user, db)
 
 
 @app.get("/api/employees")
@@ -2505,9 +2527,9 @@ def get_employee_detail(
     current_user: User = Depends(require_roles(UserRole.admin, UserRole.school_director, UserRole.hr_evaluator, UserRole.hr_head, UserRole.department_head)),
     db: Session = Depends(get_db),
 ):
-    user = db.query(User).filter(User.id == employee_id, User.role == UserRole.employee).first()
+    user = db.query(User).filter(User.id == employee_id).first()
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     # If requester is a department head, ensure the employee is in their department
     if current_user.role == UserRole.department_head:
         head_department = db.query(Department).filter(Department.head_user_id == int(current_user.id), Department.is_active == True).first()
@@ -2595,9 +2617,9 @@ async def update_employee_record(
     current_user: User = Depends(require_roles(UserRole.admin, UserRole.school_director, UserRole.hr_evaluator, UserRole.hr_head)),
     db: Session = Depends(get_db),
 ):
-    user = db.query(User).filter(User.id == employee_id, User.role == UserRole.employee).first()
+    user = db.query(User).filter(User.id == employee_id).first()
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     form = await request.form()
     username = str(form.get("username") or user.username).strip()
@@ -2630,9 +2652,9 @@ def delete_employee_record(
     current_user: User = Depends(require_roles(UserRole.admin, UserRole.school_director, UserRole.hr_evaluator, UserRole.hr_head)),
     db: Session = Depends(get_db),
 ):
-    user = db.query(User).filter(User.id == employee_id, User.role == UserRole.employee).first()
+    user = db.query(User).filter(User.id == employee_id).first()
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     db.delete(user)
     db.commit()
@@ -2871,8 +2893,28 @@ async def decide_position_request(
 
 
 @app.get("/api/reports/kpi")
-def reports_kpi(department: str = "all", current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def reports_kpi(department: str = "all", days: int = 30, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     today = date.today()
+    from datetime import timedelta
+    window_start = today - timedelta(days=days)
+
+    def calc_attendance_rate(user_ids: list[int]) -> float:
+        """Rolling 30-day attendance rate: present+late records / all non-holiday records."""
+        if not user_ids:
+            return 0.0
+        total_records = db.query(AttendanceRecord).filter(
+            AttendanceRecord.user_id.in_(user_ids),
+            AttendanceRecord.record_date >= window_start,
+            AttendanceRecord.record_date <= today,
+            AttendanceRecord.status.notin_([AttendanceStatus.holiday]),
+        ).count()
+        present_records = db.query(AttendanceRecord).filter(
+            AttendanceRecord.user_id.in_(user_ids),
+            AttendanceRecord.record_date >= window_start,
+            AttendanceRecord.record_date <= today,
+            AttendanceRecord.status.in_([AttendanceStatus.present, AttendanceStatus.late]),
+        ).count()
+        return round((present_records / total_records) * 100, 1) if total_records else 0.0
 
     # ── Scope to dept head's department ──────────────────────────────
     if current_user.role == UserRole.department_head:
@@ -2907,7 +2949,7 @@ def reports_kpi(department: str = "all", current_user: User = Depends(get_curren
             .count()
         ) if dept_employee_ids else 0
 
-        attendance_rate = round((present_today / total_employees) * 100, 1) if total_employees else 0.0
+        attendance_rate = calc_attendance_rate(dept_employee_ids)
 
         return {
             "totalEmployees": total_employees,
@@ -2918,16 +2960,13 @@ def reports_kpi(department: str = "all", current_user: User = Depends(get_curren
         }
 
     # ── Global view for other roles ───────────────────────────────────
-    # Broaden scope to include all active users except themselves and admins
     user_query = db.query(User).filter(
         User.role != UserRole.admin,
         User.id != int(current_user.id),
         User.is_active == True
     )
-    
+
     if department != "all":
-        # We need to filter users by department name
-        # Since department is stored in PositionChangeRequest, we can join or filter manually
         all_users = user_query.all()
         needle = department.strip().lower()
         target_user_ids = [int(u.id) for u in all_users if needle in get_user_department_name(u, db).lower()]
@@ -2949,28 +2988,15 @@ def reports_kpi(department: str = "all", current_user: User = Depends(get_curren
     ).count()
     total_departments = db.query(Department).filter(Department.is_active == True).count()
 
-    present_today = (
-        db.query(AttendanceRecord.user_id)
-        .filter(
-            AttendanceRecord.user_id.in_(target_user_ids),
-            AttendanceRecord.record_date == today,
-            AttendanceRecord.status.in_([AttendanceStatus.present, AttendanceStatus.late]),
-        )
-        .distinct()
-        .count()
-    )
-    attendance_rate = round((present_today / total_employees) * 100, 2) if total_employees else 0.0
+    attendance_rate = calc_attendance_rate(target_user_ids)
 
     approved_position_changes = db.query(PositionChangeRequest).filter(PositionChangeRequest.status == PositionChangeStatus.approved).count()
     turnover_rate = round((approved_position_changes / total_employees) * 100, 2) if total_employees else 0.0
-
-
 
     return {
         "totalEmployees": total_employees,
         "attendanceRate": attendance_rate,
         "turnoverRate": turnover_rate,
-
         "summary": {
             "approvedLeaves": approved_leaves,
             "totalLeaves": total_leaves,
@@ -2978,6 +3004,7 @@ def reports_kpi(department: str = "all", current_user: User = Depends(get_curren
             "activeDepartments": total_departments,
         },
     }
+
 
 
 def build_report_rows(report_type: str, department: str, db: Session, current_user: User = None) -> list[dict[str, str]]:
@@ -3101,7 +3128,7 @@ def format_relative_time(value: datetime | None) -> str:
 
 
 @app.get("/api/reports/charts")
-def reports_chart_data(department: str = "all", current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def reports_chart_data(department: str = "all", days: int = 30, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     today = date.today()
 
     # ── Scope to dept head's department ──────────────────────────────
@@ -3117,9 +3144,9 @@ def reports_chart_data(department: str = "all", current_user: User = Depends(get
 
         attendance_labels: list[str] = []
         attendance_values: list[float] = []
-        for day_offset in range(6, -1, -1):
+        for day_offset in range(days - 1, -1, -1):
             current_day = today - timedelta(days=day_offset)
-            attendance_labels.append(current_day.strftime("%a"))
+            attendance_labels.append(current_day.strftime("%b %d" if days > 7 else "%a"))
             if not dept_ids:
                 attendance_values.append(0.0)
                 continue
@@ -3175,9 +3202,9 @@ def reports_chart_data(department: str = "all", current_user: User = Depends(get
 
     attendance_labels = []
     attendance_values = []
-    for day_offset in range(6, -1, -1):
+    for day_offset in range(days - 1, -1, -1):
         current_day = today - timedelta(days=day_offset)
-        attendance_labels.append(current_day.strftime("%a"))
+        attendance_labels.append(current_day.strftime("%b %d" if days > 7 else "%a"))
         if not employee_ids:
             attendance_values.append(0.0)
             continue
@@ -3962,7 +3989,7 @@ def get_employee_attendance_details(
 ):
     employee = db.query(User).filter(User.id == employee_id, User.role != UserRole.admin).first()
     if not employee:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     if current_user.role == UserRole.department_head:
         head_department_name = get_head_department_name(current_user, db)
@@ -4011,7 +4038,7 @@ async def update_employee_attendance(
 
     employee = db.query(User).filter(User.id == employee_id).first()
     if not employee:
-        raise HTTPException(status_code=404, detail="Employee not found")
+        raise HTTPException(status_code=404, detail="User not found")
 
     record = db.query(AttendanceRecord).filter(
         AttendanceRecord.user_id == employee_id,

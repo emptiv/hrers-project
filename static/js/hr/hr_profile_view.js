@@ -120,6 +120,20 @@ function applyProfileToView(profile) {
     setInfoRowValue('Contact', profile.contactNumber || '--');
 
     // =========================
+    // DEPARTMENT TAB
+    // =========================
+    const deptInfo = profile.departmentInfo || {};
+    const setDept = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val || '--';
+    };
+    setDept('departmentName', deptInfo.name || profile.department);
+    setDept('departmentId', deptInfo.id);
+    setDept('departmentLocation', deptInfo.location);
+    setDept('departmentEmail', deptInfo.email);
+    setDept('departmentHead', deptInfo.headName);
+
+    // =========================
     // RENDER DOCUMENTS
     // =========================
     const docBody = document.querySelector('.doc-table tbody');

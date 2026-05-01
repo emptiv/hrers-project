@@ -4,6 +4,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const closeBtn = document.getElementById('closeBtn');
     const menuItems = document.querySelectorAll('.menu-item');
 
+    const params = new URLSearchParams(window.location.search);
+    const employeeId = params.get('employee_id') || params.get('id');
+
     // =========================
     // TOOLTIP
     // =========================
@@ -34,6 +37,18 @@ document.addEventListener('DOMContentLoaded', () => {
             if (target) target.classList.add('active');
         });
     });
+
+    // =========================
+    // EDIT PROFILE
+    // =========================
+    const editBtn = document.querySelector('.edit-btn');
+    if (editBtn) {
+        editBtn.addEventListener('click', () => {
+            if (employeeId) {
+                window.location.href = `hr_employee_edit.html?employee_id=${encodeURIComponent(employeeId)}`;
+            }
+        });
+    }
 
     // =========================
     // ROLE HELPERS
@@ -93,9 +108,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // =========================
     // LOAD EMPLOYEE
     // =========================
-    const params = new URLSearchParams(window.location.search);
-    const employeeId = params.get('employee_id') || params.get('id');
-
     async function loadEmployeeDetail() {
         if (!employeeId) return;
 
@@ -116,7 +128,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 `Employee ID: ${profile.employeeNo || profile.id || '--'}`;
 
             const details = document.querySelectorAll('.employment-details p');
-
             if (details[0]) {
                 details[0].innerHTML = `<strong>Status</strong>
                 <span class="status-dot" style="background:${profile.isActive ? '#8ddf9b' : '#f08d8d'}"></span>
@@ -127,6 +138,20 @@ document.addEventListener('DOMContentLoaded', () => {
             if (details[2]) details[2].innerHTML = `<strong>Department</strong> ${profile.department || '--'}`;
             if (details[3]) details[3].innerHTML = `<strong>Employment Type</strong> ${profile.employmentType || '--'}`;
             if (details[4]) details[4].innerHTML = `<strong>Date Hired</strong> ${profile.dateHired || '--'}`;
+
+            // =========================
+            // DEPARTMENT TAB
+            // =========================
+            const deptInfo = profile.departmentInfo || {};
+            const setDept = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = val || '--';
+            };
+            setDept('departmentName', deptInfo.name || profile.department);
+            setDept('departmentId', deptInfo.id);
+            setDept('departmentLocation', deptInfo.location);
+            setDept('departmentEmail', deptInfo.email);
+            setDept('departmentHead', deptInfo.headName);
 
             // =========================
             // CONTACT
