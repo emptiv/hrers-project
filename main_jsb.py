@@ -2464,15 +2464,13 @@ def reports_kpi(current_user: User = Depends(get_current_user), db: Session = De
     approved_position_changes = db.query(PositionChangeRequest).filter(PositionChangeRequest.status == PositionChangeStatus.approved).count()
     turnover_rate = round((approved_position_changes / total_employees) * 100, 2) if total_employees else 0.0
 
-    completed_trainings = db.query(TrainingSession).filter(TrainingSession.status == TrainingStatus.completed).count()
-    total_trainings = db.query(TrainingSession).count()
-    avg_performance = round((completed_trainings / total_trainings) * 10, 1) if total_trainings else 0.0
+
 
     return {
         "totalEmployees": total_employees,
         "attendanceRate": attendance_rate,
         "turnoverRate": turnover_rate,
-        "avgPerformance": avg_performance,
+
         "summary": {
             "approvedLeaves": approved_leaves,
             "totalLeaves": total_leaves,

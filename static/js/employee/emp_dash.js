@@ -58,7 +58,7 @@ function setupEventListeners() {
     });
     
     // Evaluation card click
-    setupEvaluationCard();
+
     
     // Notification clear button
     setupNotificationPanel();
@@ -68,17 +68,7 @@ function setupEventListeners() {
    EVALUATION CARD
    ================================= */
 
-function setupEvaluationCard() {
-    const evaluationCard = document.getElementById('evaluationCard');
-    
-    if (evaluationCard) {
-        evaluationCard.addEventListener('click', (e) => {
-            e.preventDefault();
-            // Navigate to evaluation page
-            window.location.href = evaluationCard.getAttribute('href');
-        });
-    }
-}
+
 
 /* =================================
    NOTIFICATION PANEL
@@ -276,7 +266,7 @@ function getLast7Days() {
 async function loadDashboardData() {
     await Promise.all([
         loadEmployeeSummary(),
-        loadEvaluationData(),
+
     ]);
 }
 
@@ -305,52 +295,7 @@ async function loadProfileSummary() {
     }
 }
 
-async function loadEvaluationData() {
-    const scoreEl = document.getElementById('evaluationScore');
-    const starsEl = document.getElementById('evaluationStars');
-    const dateEl = document.getElementById('evaluationDate');
 
-    let score = 4.0;
-    let evaluatedDate = new Date().toLocaleDateString();
-
-    try {
-        const response = await fetch('/api/attendance/history');
-        if (response.ok) {
-            const payload = await response.json();
-            const items = payload.items || [];
-            const counted = items.filter(function (item) {
-                return Number(item.workedSeconds || 0) > 0;
-            });
-            const totalHours = counted.reduce(function (acc, item) {
-                return acc + (Number(item.workedSeconds || 0) / 3600);
-            }, 0);
-            const avgHours = counted.length ? totalHours / counted.length : 0;
-            score = Math.max(3.0, Math.min(5.0, 3.0 + (avgHours / 8) * 2));
-            if (items[0] && items[0].recordDate) {
-                evaluatedDate = new Date(items[0].recordDate).toLocaleDateString();
-            }
-        }
-    } catch (error) {
-    }
-
-    const roundedScore = Number(score.toFixed(1));
-    const fullStars = Math.max(1, Math.min(5, Math.round(roundedScore)));
-    const stars = '★'.repeat(fullStars) + '☆'.repeat(5 - fullStars);
-    
-    if (scoreEl) {
-        animateScore(scoreEl, 0, roundedScore, 800);
-    }
-    
-    if (starsEl) {
-        setTimeout(() => {
-            starsEl.textContent = stars;
-        }, 800);
-    }
-    
-    if (dateEl) {
-        dateEl.textContent = `Last evaluated: ${evaluatedDate}`;
-    }
-}
 
 async function loadEmployeeSummary() {
     const latestTimeInEl = document.getElementById('latestTimeIn');
@@ -386,20 +331,4 @@ async function loadEmployeeSummary() {
         leaveCreditsEl.textContent = `Remaining: ${remainingCredits} Days`;
     }
 }
-
-function animateScore(element, start, end, duration) {
-    let startTimestamp = null;
-    
-    const step = (timestamp) => {
-        if (!startTimestamp) startTimestamp = timestamp;
-        const progress = Math.min((timestamp - startTimestamp) / duration, 1);
-        const value = (progress * (end - start) + start).toFixed(1);
-        element.textContent = value;
-        
-        if (progress < 1) {
-            requestAnimationFrame(step);
-        }
-    };
-    
-    requestAnimationFrame(step);
-}
+

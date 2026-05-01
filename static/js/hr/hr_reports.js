@@ -595,7 +595,7 @@ async function loadKPIData() {
     const totalEmployees = document.getElementById('totalEmployees');
     const attendanceRate = document.getElementById('attendanceRate');
     const turnoverRate = document.getElementById('turnoverRate');
-    const avgPerformance = document.getElementById('avgPerformance');
+
 
     try {
         const response = await fetch('/api/reports/kpi');
@@ -607,12 +607,12 @@ async function loadKPIData() {
         if (totalEmployees) totalEmployees.textContent = String(kpi.totalEmployees ?? 0);
         if (attendanceRate) attendanceRate.textContent = `${Number(kpi.attendanceRate ?? 0).toFixed(1)}%`;
         if (turnoverRate) turnoverRate.textContent = `${Number(kpi.turnoverRate ?? 0).toFixed(2)}%`;
-        if (avgPerformance) avgPerformance.textContent = `${Number(kpi.avgPerformance ?? 0).toFixed(1)}/10`;
+
     } catch (error) {
         if (totalEmployees) totalEmployees.textContent = '0';
         if (attendanceRate) attendanceRate.textContent = '0.0%';
         if (turnoverRate) turnoverRate.textContent = '0.00%';
-        if (avgPerformance) avgPerformance.textContent = '0.0/10';
+
     }
 }
 
