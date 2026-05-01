@@ -31,6 +31,7 @@ from models import (
     LeaveApprovalStage,
     LeaveRequest,
     LeaveStatus,
+    PositionChangeApprovalStage,
     ProfileDocument,
     UserProfile,
     PositionChangeRequest,
@@ -654,12 +655,41 @@ def can_review_position_request(current_user: User, position_request: PositionCh
     if current_user.id == position_request.requester_user_id:
         return False
 
-    # Only HR roles can review and approve position change requests
-    # School Director is read-only for position change requests
-    return current_user.role in {
-        UserRole.hr_evaluator,
-        UserRole.hr_head,
-    }
+    if position_request.status != PositionChangeStatus.pending:
+        return False
+
+    approval_stage = str(position_request.approval_stage or PositionChangeApprovalStage.hr_evaluator.value)
+    if current_user.role == UserRole.hr_evaluator:
+        return approval_stage == PositionChangeApprovalStage.hr_evaluator.value
+    if current_user.role == UserRole.hr_head:
+        return approval_stage == PositionChangeApprovalStage.hr_head.value
+    if current_user.role == UserRole.school_director:
+        return approval_stage == PositionChangeApprovalStage.school_director.value
+
+    return False
+
+
+def position_change_display_status(item: PositionChangeRequest) -> str:
+    if item.status == PositionChangeStatus.approved:
+        return PositionChangeStatus.approved.value
+    if item.status == PositionChangeStatus.rejected:
+        return PositionChangeStatus.rejected.value
+
+    approval_stage = str(item.approval_stage or PositionChangeApprovalStage.hr_evaluator.value)
+    if approval_stage == PositionChangeApprovalStage.hr_head.value:
+        return "Pending - HR Head"
+    if approval_stage == PositionChangeApprovalStage.school_director.value:
+        return "Pending - School Director"
+    return "Pending - HR Evaluator"
+
+
+def position_change_pending_with(item: PositionChangeRequest) -> str:
+    approval_stage = str(item.approval_stage or PositionChangeApprovalStage.hr_evaluator.value)
+    if approval_stage == PositionChangeApprovalStage.hr_head.value:
+        return "HR Head"
+    if approval_stage == PositionChangeApprovalStage.school_director.value:
+        return "School Director"
+    return "HR Evaluator"
 
 
 def leave_to_payload(item: LeaveRequest, current_user: User | None = None) -> dict:
@@ -696,6 +726,9 @@ def position_change_to_payload(item: PositionChangeRequest) -> dict:
         "effectiveDate": item.effective_date.isoformat(),
         "reason": item.reason,
         "status": item.status.value,
+        "approvalStage": str(item.approval_stage or PositionChangeApprovalStage.hr_evaluator.value),
+        "displayStatus": position_change_display_status(item),
+        "pendingWith": position_change_pending_with(item),
         "reviewedBy": item.reviewed_by_name or "---",
         "reviewRemarks": item.review_remarks or "Awaiting review.",
         "submittedAt": item.created_at.isoformat() if item.created_at else "",
@@ -958,6 +991,23 @@ def startup() -> None:
             if not column_exists:
                 connection.exec_driver_sql(
                     "ALTER TABLE leave_requests ADD COLUMN approval_stage VARCHAR(40) NOT NULL DEFAULT 'department_head' AFTER status"
+                )
+
+            position_stage_exists = connection.exec_driver_sql(
+                """
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'position_change_requests'
+                  AND column_name = 'approval_stage'
+                """
+            ).scalar_one()
+            if not position_stage_exists:
+                connection.exec_driver_sql(
+                    "ALTER TABLE position_change_requests ADD COLUMN approval_stage VARCHAR(40) NOT NULL DEFAULT 'hr_evaluator' AFTER status"
+                )
+                connection.exec_driver_sql(
+                    "UPDATE position_change_requests SET approval_stage = 'completed' WHERE status IN ('Approved', 'Rejected')"
                 )
 
             file_content_type = connection.exec_driver_sql(
@@ -2505,9 +2555,10 @@ async def create_position_request(
         effective_date=effective_date,
         reason=reason,
         status=PositionChangeStatus.pending,
+        approval_stage=PositionChangeApprovalStage.hr_evaluator.value,
         reviewed_by_user_id=None,
         reviewed_by_name=None,
-        review_remarks="Awaiting review.",
+        review_remarks="Awaiting HR Evaluator review.",
     )
     db.add(item)
     db.commit()
@@ -2581,10 +2632,40 @@ async def decide_position_request(
     if decision_raw not in {"approved", "rejected"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid decision")
 
-    item.status = PositionChangeStatus.approved if decision_raw == "approved" else PositionChangeStatus.rejected
+    approval_stage = str(item.approval_stage or PositionChangeApprovalStage.hr_evaluator.value)
+    today_text = date.today().isoformat()
+
+    if approval_stage == PositionChangeApprovalStage.hr_evaluator.value:
+        if decision_raw == "approved":
+            item.approval_stage = PositionChangeApprovalStage.hr_head.value
+            item.review_remarks = remarks or f"Approved by HR Evaluator {current_user.full_name} on {today_text}. Awaiting HR Head review."
+        else:
+            item.status = PositionChangeStatus.rejected
+            item.approval_stage = PositionChangeApprovalStage.completed.value
+            item.review_remarks = remarks or f"Rejected by HR Evaluator {current_user.full_name} on {today_text}."
+    elif approval_stage == PositionChangeApprovalStage.hr_head.value:
+        if decision_raw == "approved":
+            item.approval_stage = PositionChangeApprovalStage.school_director.value
+            item.review_remarks = remarks or f"Approved by HR Head {current_user.full_name} on {today_text}. Awaiting School Director review."
+        else:
+            item.status = PositionChangeStatus.rejected
+            item.approval_stage = PositionChangeApprovalStage.completed.value
+            item.review_remarks = remarks or f"Rejected by HR Head {current_user.full_name} on {today_text}."
+    elif approval_stage == PositionChangeApprovalStage.school_director.value:
+        if decision_raw == "approved":
+            item.status = PositionChangeStatus.approved
+            item.approval_stage = PositionChangeApprovalStage.completed.value
+            item.current_position = item.requested_position
+            item.review_remarks = remarks or f"Approved by School Director {current_user.full_name} on {today_text}. Position updated to {item.requested_position}."
+        else:
+            item.status = PositionChangeStatus.rejected
+            item.approval_stage = PositionChangeApprovalStage.completed.value
+            item.review_remarks = remarks or f"Rejected by School Director {current_user.full_name} on {today_text}."
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This request is no longer pending review.")
+
     item.reviewed_by_user_id = int(current_user.id)
     item.reviewed_by_name = str(current_user.full_name)
-    item.review_remarks = remarks or f"{item.status.value} by {current_user.full_name} on {date.today().isoformat()}."
     db.commit()
     db.refresh(item)
     return {"message": f"Request {item.status.value.lower()}.", "request": position_change_to_payload(item)}

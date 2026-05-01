@@ -109,6 +109,13 @@ class PositionChangeStatus(str, Enum):
     rejected = "Rejected"
 
 
+class PositionChangeApprovalStage(str, Enum):
+    hr_evaluator = "hr_evaluator"
+    hr_head = "hr_head"
+    school_director = "school_director"
+    completed = "completed"
+
+
 class PositionChangeRequest(Base):
     __tablename__ = "position_change_requests"
 
@@ -126,6 +133,7 @@ class PositionChangeRequest(Base):
         nullable=False,
         default=PositionChangeStatus.pending,
     )
+    approval_stage = Column(String(40), nullable=False, default=PositionChangeApprovalStage.hr_evaluator.value)
     reviewed_by_user_id = Column(Integer, nullable=True)
     reviewed_by_name = Column(String(150), nullable=True)
     review_remarks = Column(Text, nullable=True)
