@@ -415,6 +415,30 @@ def build_employee_detail_payload(user: User, db: Session) -> dict[str, str | bo
     }
 
 
+def get_head_department_name(current_user: User, db: Session) -> str | None:
+    if current_user.role != UserRole.department_head:
+        return None
+
+    head_department = db.query(Department).filter(Department.head_user_id == int(current_user.id), Department.is_active == True).first()
+    return str(head_department.name) if head_department else None
+
+
+def get_user_department_name(user: User, db: Session) -> str:
+    latest_position = (
+        db.query(PositionChangeRequest)
+        .filter(PositionChangeRequest.requester_user_id == int(user.id))
+        .order_by(PositionChangeRequest.created_at.desc(), PositionChangeRequest.id.desc())
+        .first()
+    )
+
+    if user.role == UserRole.department_head:
+        head_department_name = get_head_department_name(user, db)
+        if head_department_name:
+            return head_department_name
+
+    return str((latest_position.current_department if latest_position else None) or "General")
+
+
 def build_universal_user_payload(user: User, db: Session) -> dict[str, str | bool | int | None]:
     payload = build_employee_detail_payload(user, db)
     payload["name"] = str(user.full_name)
@@ -3490,12 +3514,33 @@ def attendance_monitoring(
     week_start = current_week_start - timedelta(days=safe_offset * 7)
     week_end = week_start + timedelta(days=6)
 
-    employees = (
-        db.query(User)
-        .filter(User.role != UserRole.admin, User.is_active == True)
-        .order_by(User.full_name.asc())
-        .all()
+    all_users = db.query(User).filter(
+        User.role != UserRole.admin,
+        User.is_active == True,
     )
+
+    if current_user.role == UserRole.department_head:
+        head_department_name = get_head_department_name(current_user, db)
+        if not head_department_name:
+            return {
+                "weekOffset": safe_offset,
+                "weekStart": week_start.isoformat(),
+                "weekEnd": week_end.isoformat(),
+                "weekLabel": f"{week_start.strftime('%b')} {week_start.day} - {week_end.strftime('%b')} {week_end.day}, {week_end.year}",
+                "rows": [],
+            }
+
+        employees = [
+            user
+            for user in all_users.order_by(User.full_name.asc()).all()
+            if get_user_department_name(user, db) == head_department_name
+        ]
+    else:
+        employees = (
+            all_users
+            .order_by(User.full_name.asc())
+            .all()
+        )
     employee_ids = [int(user.id) for user in employees]
 
     records = []

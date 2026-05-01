@@ -12,7 +12,11 @@
     function getSelectedColumnIndex(weekStartDate, selectedDate) {
         const basis = selectedDate || new Date();
         const diffDays = Math.floor((stripTime(basis) - stripTime(weekStartDate)) / (24 * 3600 * 1000));
-        if (diffDays < 0 || diffDays > 6) return 2;
+        if (diffDays < 0 || diffDays > 6) {
+            // If the week being viewed doesn't contain the 'basis' date, 
+            // fallback to the same day of the week (0-6) relative to the week start.
+            return 1 + basis.getDay();
+        }
         return 1 + diffDays;
     }
 
@@ -62,7 +66,6 @@
         const activeFiltersWrap = document.querySelector('.active-filters');
         const actionButtons = Array.from(document.querySelectorAll('.action-buttons .btn-action'));
         const filterBtn = actionButtons[0] || null;
-        const dateBtn = actionButtons[1] || null;
         const dateInput = document.getElementById('sampleDateInput');
 
         const pager = document.querySelector('.action-buttons .pagination');
@@ -104,7 +107,7 @@
                 <select id="hfDept" class="head-filter-select">
                     <option>All</option>
                 </select>
-                <label class="head-filter-label">Status (Selected day)</label>
+                <label class="head-filter-label">Status Today</label>
                 <select id="hfStatus" class="head-filter-select">
                     <option>All</option>
                     <option>Present</option>
@@ -131,14 +134,7 @@
             filterPopover.style.display = open ? 'block' : 'none';
         }
 
-        function setDateButtonLabel() {
-            if (!dateBtn) return;
-            if (!filterState.date) {
-                dateBtn.innerHTML = '<i class="fas fa-calendar-alt"></i> Select Date';
-                return;
-            }
-            dateBtn.innerHTML = '<i class="fas fa-calendar-alt"></i> ' + formatDateLabel(filterState.date);
-        }
+
 
         function createFilterTag(label, onRemove) {
             if (!activeFiltersWrap) return;
@@ -167,14 +163,6 @@
             if (filterState.status !== 'All') {
                 createFilterTag('Status: ' + filterState.status, function () {
                     filterState.status = 'All';
-                    applyFilters();
-                });
-            }
-            if (filterState.date) {
-                createFilterTag('Date: ' + formatDateLabel(filterState.date), function () {
-                    filterState.date = null;
-                    if (dateInput) dateInput.value = '';
-                    setDateButtonLabel();
                     applyFilters();
                 });
             }
@@ -516,35 +504,13 @@
             clearBtnPopover.addEventListener('click', function () {
                 filterState.dept = 'All';
                 filterState.status = 'All';
-                filterState.date = null;
                 if (searchInput) searchInput.value = '';
-                if (dateInput) dateInput.value = '';
-                setDateButtonLabel();
                 toggleFilterPopover(false);
                 applyFilters();
             });
         }
 
-        if (dateBtn && dateInput) {
-            dateBtn.addEventListener('click', function (e) {
-                e.preventDefault();
-                if (filterState.date) {
-                    const y = filterState.date.getFullYear();
-                    const m = String(filterState.date.getMonth() + 1).padStart(2, '0');
-                    const d = String(filterState.date.getDate()).padStart(2, '0');
-                    dateInput.value = y + '-' + m + '-' + d;
-                } else {
-                    dateInput.value = '';
-                }
-                dateInput.showPicker ? dateInput.showPicker() : dateInput.click();
-            });
 
-            dateInput.addEventListener('change', function () {
-                filterState.date = dateInput.value ? stripTime(new Date(dateInput.value)) : null;
-                setDateButtonLabel();
-                applyFilters();
-            });
-        }
 
         if (pagerPrev) {
             pagerPrev.addEventListener('click', function () {
@@ -614,7 +580,6 @@
             });
         }
 
-        setDateButtonLabel();
         loadWeekData();
     });
 })();
