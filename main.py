@@ -4024,7 +4024,7 @@ async def delete_employee_attendance(
 @app.get("/api/attendance/monitoring")
 def attendance_monitoring(
     offset: int = 0,
-    current_user: User = Depends(require_roles(UserRole.hr_evaluator, UserRole.hr_head, UserRole.department_head, UserRole.school_director, UserRole.admin)),
+    current_user: User = Depends(require_roles(UserRole.hr_evaluator, UserRole.hr_head, UserRole.department_head, UserRole.admin)),
     db: Session = Depends(get_db),
 ):
     safe_offset = max(-52, min(52, offset))

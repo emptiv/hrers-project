@@ -13,10 +13,7 @@ const closeBtn   = document.getElementById("closeBtn");
 const menuItems  = document.querySelectorAll(".menu-item");
 
 // Tab Switcher
-const tabLog       = document.getElementById('tab-log');
-const tabMonit     = document.getElementById('tab-monitoring');
-const logContent   = document.getElementById('logContent'); 
-const monitContent = document.getElementById('monitoringContent');
+
 
 // Attendance clock elements
 const clockBtn           = document.getElementById("clockBtn");
@@ -346,16 +343,7 @@ if (nextPeriodBtn) nextPeriodBtn.addEventListener("click", () => {
 
 /* ── 7. TAB SWITCHER (LOG VS MONITORING) ────────────────── */
 
-if (tabLog && tabMonit) {
-    tabLog.addEventListener('click', () => {
-        tabLog.classList.add('active'); tabMonit.classList.remove('active');
-        if(logContent) logContent.style.display = 'block';
-        if(monitContent) monitContent.style.display = 'none';
-    });
-    tabMonit.addEventListener('click', () => {
-        window.location.href = '/templates/sd/sd_attendancemonitoring.html';
-    });
-}
+
 
 
 /* ── 8. HELPERS & INITIALIZATION ────────────────────────── */
