@@ -65,7 +65,7 @@ function openHeadModal(id) {
     if (!data) return;
 
     const isFinal = (data.status === "Approved" || data.status === "Rejected");
-    const canReview = (data.approvalStage || '').toLowerCase() === 'department_head' && !isFinal;
+    const canReview = Boolean(data.canReview);
     const statusClass = data.status.toLowerCase().replace(/\s+/g, '-');
     const displayStatus = data.displayStatus || data.status;
 
@@ -75,7 +75,7 @@ function openHeadModal(id) {
     document.getElementById('modalRemarks').innerText = data.reviewRemarks || 'Awaiting Department Head review.';
     document.getElementById('modalStatusContainer').innerHTML = `<span class="status-pill ${statusClass}">${displayStatus}</span>`;
     document.getElementById('modalReviewerText').innerHTML = `<small>Reviewed by: ${data.reviewedBy}</small>`;
-    document.getElementById('modalActions').style.display = canReview ? "flex" : "none";
+    document.getElementById('modalActions').style.display = (!isFinal && canReview) ? "flex" : "none";
     document.getElementById('viewModal').style.display = 'flex';
 }
 

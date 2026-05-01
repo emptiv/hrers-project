@@ -29,6 +29,9 @@ function mapLeaveStageForHead(item) {
     if (stage === 'hr') {
         return 'pending-hr';
     }
+    if (stage === 'hr_head') {
+        return 'pending-hrhead';
+    }
     if (stage === 'school_director') {
         return 'pending-sd';
     }
@@ -39,6 +42,7 @@ function getLeaveStageLabel(status) {
     var labels = {
         'pending-head': 'Pending - Dept. Head',
         'pending-hr': 'Pending - HR Evaluator',
+        'pending-hrhead': 'Pending - HR Head',
         'pending-sd': 'Pending - SD',
         approved: 'Approved',
         rejected: 'Rejected'
@@ -51,7 +55,9 @@ function mapLeaveToHeadApp(item) {
     const displayStatus = item.displayStatus || getLeaveStageLabel(normalizedStatus);
     const pendingWith = normalizedStatus === 'pending-head'
         ? 'Department Head'
-        : (normalizedStatus === 'pending-hr' ? 'HR Evaluator' : (normalizedStatus === 'pending-sd' ? 'School Director' : 'Completed'));
+        : (normalizedStatus === 'pending-hr'
+            ? 'HR Evaluator'
+            : (normalizedStatus === 'pending-hrhead' ? 'HR Head' : (normalizedStatus === 'pending-sd' ? 'School Director' : 'Completed')));
     return {
         id: 'LR-' + item.id,
         sourceType: 'leave',
@@ -64,7 +70,7 @@ function mapLeaveToHeadApp(item) {
         position: item.leaveType || 'Leave Request',
         applyingFor: item.leaveType || 'Leave Request',
         submitted: item.dateFiled || '---',
-        progress: normalizedStatus === 'pending-head' ? 'In Review' : 'Completed',
+        progress: normalizedStatus.indexOf('pending-') === 0 ? 'In Review' : 'Completed',
         status: normalizedStatus,
         statusLabel: displayStatus,
         hrReviewedBy: item.reviewedBy || '---',

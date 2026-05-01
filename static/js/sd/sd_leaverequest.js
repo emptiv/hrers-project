@@ -79,6 +79,7 @@ function openViewModalByID(id) {
     if (!data) return;
 
     const isFinal = (data.status === "Approved" || data.status === "Rejected");
+    const canReview = Boolean(data.canReview);
     const statusClass = data.status.toLowerCase().replace(/\s+/g, '-');
     const displayStatus = data.displayStatus || data.status;
 
@@ -89,7 +90,7 @@ function openViewModalByID(id) {
     document.getElementById('modalReviewerText').innerText = `Reviewed by: ${data.reviewedBy}`;
     document.getElementById('modalStatusContainer').innerHTML = `<span class="status-pill ${statusClass}">${displayStatus}</span>`;
 
-    document.getElementById('modalActions').style.display = isFinal ? "none" : "flex";
+    document.getElementById('modalActions').style.display = (!isFinal && canReview) ? "flex" : "none";
 
     const preview = document.querySelector('.pdf-placeholder');
     preview.innerHTML = `<i class="fas fa-file-pdf"></i><p>Preview for ${data.fileName}</p>`;

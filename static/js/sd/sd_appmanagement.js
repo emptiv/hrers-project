@@ -87,6 +87,9 @@ function mapLeaveStageForSd(item) {
     if (stage === 'school_director') {
         return 'pending-sd';
     }
+    if (stage === 'hr_head') {
+        return 'pending-hrhead';
+    }
     if (stage === 'hr') {
         return 'pending-hr';
     }
@@ -97,6 +100,7 @@ function getLeaveStageLabel(status) {
     var labels = {
         'pending-head': 'Pending - Dept. Head',
         'pending-hr': 'Pending - HR Evaluator',
+        'pending-hrhead': 'Pending - HR Head',
         'pending-sd': 'Pending - SD',
         approved: 'Approved',
         rejected: 'Rejected'
@@ -109,7 +113,9 @@ function mapLeaveToApp(item) {
     var displayStatus = item.displayStatus || getLeaveStageLabel(normalizedStatus);
     var pendingWith = normalizedStatus === 'pending-head'
         ? 'Department Head'
-        : (normalizedStatus === 'pending-hr' ? 'HR Evaluator' : (normalizedStatus === 'pending-sd' ? 'School Director' : 'Completed'));
+        : (normalizedStatus === 'pending-hr'
+            ? 'HR Evaluator'
+            : (normalizedStatus === 'pending-hrhead' ? 'HR Head' : (normalizedStatus === 'pending-sd' ? 'School Director' : 'Completed')));
     return {
         id: 'LR-' + item.id,
         sourceType: 'leave',

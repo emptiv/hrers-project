@@ -494,6 +494,8 @@ def can_review_leave(current_user: User, leave_request: LeaveRequest) -> bool:
         return role == UserRole.department_head
     if approval_stage == LeaveApprovalStage.hr.value:
         return role in {UserRole.hr_evaluator, UserRole.hr_head}
+    if approval_stage == LeaveApprovalStage.hr_head.value:
+        return role == UserRole.hr_head
     if approval_stage == LeaveApprovalStage.school_director.value:
         return role == UserRole.school_director
     return False
@@ -508,6 +510,8 @@ def leave_display_status(item: LeaveRequest) -> str:
     approval_stage = str(item.approval_stage or LeaveApprovalStage.department_head.value)
     if approval_stage == LeaveApprovalStage.hr.value:
         return "Pending HR Review"
+    if approval_stage == LeaveApprovalStage.hr_head.value:
+        return "Pending HR Head Review"
     if approval_stage == LeaveApprovalStage.school_director.value:
         return "Pending School Director Review"
     if approval_stage == LeaveApprovalStage.completed.value:
@@ -518,6 +522,10 @@ def leave_display_status(item: LeaveRequest) -> str:
 def initial_leave_approval_stage(current_user: User) -> tuple[str, str]:
     if current_user.role == UserRole.department_head:
         return LeaveApprovalStage.hr.value, "Awaiting HR review."
+    if current_user.role == UserRole.hr_evaluator:
+        return LeaveApprovalStage.hr_head.value, "Awaiting HR Head review."
+    if current_user.role == UserRole.hr_head:
+        return LeaveApprovalStage.school_director.value, "Awaiting School Director review."
     return LeaveApprovalStage.department_head.value, "Awaiting Department Head review."
 
 
@@ -533,7 +541,8 @@ def can_review_position_request(current_user: User, position_request: PositionCh
     }
 
 
-def leave_to_payload(item: LeaveRequest) -> dict:
+def leave_to_payload(item: LeaveRequest, current_user: User | None = None) -> dict:
+    can_review = bool(current_user and can_review_leave(current_user, item))
     return {
         "id": item.id,
         "name": item.requester_name,
@@ -551,6 +560,7 @@ def leave_to_payload(item: LeaveRequest) -> dict:
         "reason": item.reason,
         "fileName": item.file_name or "No Document Attached",
         "reviewRemarks": item.review_remarks or "Awaiting review.",
+        "canReview": can_review,
     }
 
 
@@ -1447,15 +1457,27 @@ def list_leave_requests(
                     LeaveRequest.requester_user_id == int(current_user.id),
                 )
             )
-        elif role in {UserRole.hr_evaluator, UserRole.hr_head}:
-            query = query.filter(LeaveRequest.approval_stage == LeaveApprovalStage.hr.value)
+        elif role == UserRole.hr_evaluator:
+            query = query.filter(
+                or_(
+                    LeaveRequest.approval_stage == LeaveApprovalStage.hr.value,
+                    LeaveRequest.requester_user_id == int(current_user.id),
+                )
+            )
+        elif role == UserRole.hr_head:
+            query = query.filter(
+                or_(
+                    LeaveRequest.approval_stage.in_([LeaveApprovalStage.hr.value, LeaveApprovalStage.hr_head.value]),
+                    LeaveRequest.requester_user_id == int(current_user.id),
+                )
+            )
         elif role == UserRole.school_director:
             query = query.filter(LeaveRequest.approval_stage == LeaveApprovalStage.school_director.value)
     elif mode.lower() == "history":
         query = query.filter(LeaveRequest.status.in_([LeaveStatus.approved, LeaveStatus.rejected]))
 
     items = query.order_by(LeaveRequest.created_at.desc()).all()
-    return {"items": [leave_to_payload(item) for item in items]}
+    return {"items": [leave_to_payload(item, current_user) for item in items]}
 
 
 @app.get("/api/leave-credits")
@@ -1480,7 +1502,7 @@ def get_leave_request(
     if role == UserRole.employee and item.requester_user_id != int(current_user.id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
 
-    return leave_to_payload(item)
+    return leave_to_payload(item, current_user)
 
 
 @app.post("/api/leave-requests/{leave_id}/decision")
@@ -1542,6 +1564,18 @@ async def decide_leave_request(
                 item.approval_stage = LeaveApprovalStage.completed.value
                 item.review_remarks = remarks or f"Rejected by HR {current_user.full_name} on {today_text}."
                 message = "Request rejected."
+        elif str(item.requester_role) == UserRole.hr_evaluator.value:
+            if decision_raw == "approved":
+                item.approval_stage = LeaveApprovalStage.hr_head.value
+                item.review_remarks = remarks or (
+                    f"Reviewed by HR {current_user.full_name} on {today_text}. Awaiting HR Head approval."
+                )
+                message = "Request forwarded to HR Head."
+            else:
+                item.status = LeaveStatus.rejected
+                item.approval_stage = LeaveApprovalStage.completed.value
+                item.review_remarks = remarks or f"Rejected by HR {current_user.full_name} on {today_text}."
+                message = "Request rejected."
         else:
             if decision_raw == "approved":
                 item.status = LeaveStatus.approved
@@ -1553,6 +1587,23 @@ async def decide_leave_request(
                 item.approval_stage = LeaveApprovalStage.completed.value
                 item.review_remarks = remarks or f"Rejected by HR {current_user.full_name} on {today_text}."
                 message = "Request rejected."
+    elif approval_stage == LeaveApprovalStage.hr_head.value:
+        if current_user.role != UserRole.hr_head:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to review this request")
+
+        item.reviewed_by_user_id = int(current_user.id)
+        item.reviewed_by_name = str(current_user.full_name)
+        if decision_raw == "approved":
+            item.approval_stage = LeaveApprovalStage.school_director.value
+            item.review_remarks = remarks or (
+                f"Approved by HR Head {current_user.full_name} on {today_text}. Awaiting School Director review."
+            )
+            message = "Request forwarded to School Director."
+        else:
+            item.status = LeaveStatus.rejected
+            item.approval_stage = LeaveApprovalStage.completed.value
+            item.review_remarks = remarks or f"Rejected by HR Head {current_user.full_name} on {today_text}."
+            message = "Request rejected."
     elif approval_stage == LeaveApprovalStage.school_director.value:
         if current_user.role != UserRole.school_director:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to review this request")
@@ -1573,7 +1624,7 @@ async def decide_leave_request(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to review this request")
     db.commit()
     db.refresh(item)
-    return {"message": message, "leave": leave_to_payload(item)}
+    return {"message": message, "leave": leave_to_payload(item, current_user)}
 
 
 @app.get("/accounts/get-user-data/{user_id}/")

@@ -79,6 +79,7 @@ function openHRModal(id) {
     if (!data) return;
 
     const isFinal = (data.status === "Approved" || data.status === "Rejected");
+    const canReview = Boolean(data.canReview);
     const statusClass = data.status.toLowerCase().replace(/\s+/g, '-');
     const displayStatus = data.displayStatus || data.status;
 
@@ -99,7 +100,7 @@ function openHRModal(id) {
     }
 
     const actions = document.getElementById('modalActions');
-    actions.style.display = isFinal ? "none" : "flex";
+    actions.style.display = (!isFinal && canReview) ? "flex" : "none";
 
     const preview = document.querySelector('.pdf-placeholder');
     preview.innerHTML = `<i class="fas fa-file-pdf"></i><p>Preview for ${data.fileName}</p>`;
