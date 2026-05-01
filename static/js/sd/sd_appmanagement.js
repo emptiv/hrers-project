@@ -9,7 +9,7 @@ let activeAppId = null;
 let activeAppFilter = '';
 let activeAppFilterLabel = '';
 let activeDocPage = 1;
-let activeMainTab = 'new';
+let activeMainTab = 'position';
 
 let appData = [];
 let positionChangeData = [];
@@ -198,16 +198,7 @@ function mapPositionToApp(item) {
 }
 
 async function refreshAppManagementData() {
-    try {
-        var leaveResponse = await fetch('/api/leave-requests?mode=all');
-        if (leaveResponse.ok) {
-            var leavePayload = await leaveResponse.json();
-            appData = (leavePayload.items || []).map(mapLeaveToApp);
-        }
-    } catch (error) {
-        appData = [];
-    }
-
+    // New Employee Applications (Leave Requests) removed.
     try {
         var positionResponse = await fetch('/api/position-requests?mode=all');
         if (positionResponse.ok) {
@@ -398,17 +389,17 @@ function clearAppFilter() {
 }
 
 function setMainTab(tabName) {
-    var tabNew = document.getElementById('tab-new');
     var tabPosition = document.getElementById('tab-position');
+    var logBtn = document.getElementById('openPositionRequestBtn');
 
-    activeMainTab = tabName === 'position' ? 'position' : 'new';
+    activeMainTab = 'position'; // Always position now
 
-    if (activeMainTab === 'position') {
+    if (tabPosition) {
         tabPosition.classList.add('active');
-        tabNew.classList.remove('active');
-    } else {
-        tabNew.classList.add('active');
-        tabPosition.classList.remove('active');
+    }
+    if (logBtn) {
+        logBtn.hidden = false;
+        logBtn.style.display = 'inline-flex';
     }
 
     updateTableHeaders();
@@ -896,7 +887,6 @@ document.addEventListener('DOMContentLoaded', function () {
     const sidebar     = document.getElementById('sidebar');
     const logoToggle  = document.getElementById('logoToggle');
     const closeBtn    = document.getElementById('closeBtn');
-    const tabNew      = document.getElementById('tab-new');
     const tabPosition = document.getElementById('tab-position');
     const posModal    = document.getElementById('positionChangeModal');
     const viewModal   = document.getElementById('viewModal');
@@ -916,17 +906,13 @@ document.addEventListener('DOMContentLoaded', function () {
     if (closeBtn)   closeBtn.onclick   = function () { sidebar.classList.add('collapsed'); };
     if (logoToggle) logoToggle.onclick = function () { sidebar.classList.toggle('collapsed'); };
 
-    // Tab — Records
-    tabNew.addEventListener('click', function () {
-        setMainTab('new');
-        renderCurrentTab();
-    });
-
     // Tab — Position Change Requests
-    tabPosition.addEventListener('click', function () {
-        setMainTab('position');
-        renderCurrentTab();
-    });
+    if (tabPosition) {
+        tabPosition.addEventListener('click', function () {
+            setMainTab('position');
+            renderCurrentTab();
+        });
+    }
 
     if (filterBtn) {
         filterBtn.addEventListener('click', function (e) {
@@ -1078,7 +1064,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     // Initial render
-    setMainTab('new');
+    setMainTab('position');
     syncFilterChip();
     refreshAppManagementData().then(function () {
         renderCurrentTab();
