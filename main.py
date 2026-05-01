@@ -3960,7 +3960,7 @@ def get_employee_attendance_details(
     current_user: User = Depends(require_roles(UserRole.hr_evaluator, UserRole.hr_head, UserRole.department_head, UserRole.school_director, UserRole.admin)),
     db: Session = Depends(get_db),
 ):
-    employee = db.query(User).filter(User.id == employee_id, User.role == UserRole.employee).first()
+    employee = db.query(User).filter(User.id == employee_id, User.role != UserRole.admin).first()
     if not employee:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
 
@@ -4100,7 +4100,7 @@ async def delete_employee_attendance(
 @app.get("/api/attendance/monitoring")
 def attendance_monitoring(
     offset: int = 0,
-    current_user: User = Depends(require_roles(UserRole.hr_evaluator, UserRole.hr_head, UserRole.department_head, UserRole.admin)),
+    current_user: User = Depends(require_roles(UserRole.hr_evaluator, UserRole.hr_head, UserRole.department_head, UserRole.school_director, UserRole.admin)),
     db: Session = Depends(get_db),
 ):
     safe_offset = max(-52, min(52, offset))
@@ -4113,7 +4113,6 @@ def attendance_monitoring(
     all_users = db.query(User).filter(
         User.role != UserRole.admin,
         User.is_active == True,
-        User.id != int(current_user.id),
     )
 
     if current_user.role == UserRole.department_head:
@@ -4206,7 +4205,9 @@ def attendance_monitoring(
             .first()
         )
 
-        title = (latest_position.current_position if latest_position and latest_position.current_position else "Employee")
+        # Improve title and department fallbacks for non-employees
+        role_label = str(user.role.value).replace("_", " ").title()
+        title = (latest_position.current_position if latest_position and latest_position.current_position else role_label)
         department = (latest_position.current_department if latest_position and latest_position.current_department else "General")
         employee_no = str(user.employee_no or f"EMP-{int(user.id):03d}")
 

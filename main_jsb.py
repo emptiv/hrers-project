@@ -3444,6 +3444,39 @@ def attendance_summary(
     return build_weekly_attendance_summary(records, max(0, offset))
 
 
+@app.get("/api/attendance/employee/{employee_id}")
+def get_employee_attendance_details(
+    employee_id: int,
+    view: str = "weekly",
+    offset: int = 0,
+    current_user: User = Depends(require_roles(UserRole.hr_evaluator, UserRole.hr_head, UserRole.department_head, UserRole.school_director, UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    employee = db.query(User).filter(User.id == employee_id, User.role != UserRole.admin).first()
+    if not employee:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+
+    if current_user.role == UserRole.department_head:
+        head_department_name = get_head_department_name(current_user, db)
+        if not head_department_name:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
+        employee_department = get_user_department_name(employee, db)
+        if employee_department != head_department_name:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
+
+    records = (
+        db.query(AttendanceRecord)
+        .filter(AttendanceRecord.user_id == int(employee.id))
+        .order_by(AttendanceRecord.record_date.asc())
+        .all()
+    )
+
+    if view == "monthly":
+        return build_monthly_attendance_summary(records, max(0, offset))
+
+    return build_weekly_attendance_summary(records, max(0, offset))
+
+
 @app.get("/api/attendance/monitoring")
 def attendance_monitoring(
     offset: int = 0,
@@ -3529,7 +3562,9 @@ def attendance_monitoring(
             .first()
         )
 
-        title = (latest_position.current_position if latest_position and latest_position.current_position else "Employee")
+        # Improve title and department fallbacks for non-employees
+        role_label = str(user.role.value).replace("_", " ").title()
+        title = (latest_position.current_position if latest_position and latest_position.current_position else role_label)
         department = (latest_position.current_department if latest_position and latest_position.current_department else "General")
         employee_no = str(user.employee_no or f"EMP-{int(user.id):03d}")
 
