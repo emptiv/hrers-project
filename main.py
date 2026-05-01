@@ -2857,6 +2857,51 @@ async def decide_position_request(
 @app.get("/api/reports/kpi")
 def reports_kpi(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     today = date.today()
+
+    # ── Scope to dept head's department ──────────────────────────────
+    if current_user.role == UserRole.department_head:
+        dept_name = get_head_department_name(current_user, db)
+        all_active_users = db.query(User).filter(User.is_active == True).all()
+        dept_users = [
+            u for u in all_active_users
+            if u.role == UserRole.employee and get_user_department_name(u, db) == dept_name
+        ] if dept_name else []
+        dept_employee_ids = [int(u.id) for u in dept_users]
+        total_employees = len(dept_users)
+
+        present_today = (
+            db.query(AttendanceRecord.user_id)
+            .filter(
+                AttendanceRecord.user_id.in_(dept_employee_ids),
+                AttendanceRecord.record_date == today,
+                AttendanceRecord.status.in_([AttendanceStatus.present, AttendanceStatus.late]),
+            )
+            .distinct()
+            .count()
+        ) if dept_employee_ids else 0
+
+        on_leave_today = (
+            db.query(AttendanceRecord.user_id)
+            .filter(
+                AttendanceRecord.user_id.in_(dept_employee_ids),
+                AttendanceRecord.record_date == today,
+                AttendanceRecord.status == AttendanceStatus.leave,
+            )
+            .distinct()
+            .count()
+        ) if dept_employee_ids else 0
+
+        attendance_rate = round((present_today / total_employees) * 100, 1) if total_employees else 0.0
+
+        return {
+            "totalEmployees": total_employees,
+            "presentToday": present_today,
+            "onLeaveToday": on_leave_today,
+            "attendanceRate": attendance_rate,
+            "summary": {},
+        }
+
+    # ── Global view for other roles ───────────────────────────────────
     total_employees = db.query(User).filter(User.role == UserRole.employee, User.is_active == True).count()
     approved_leaves = db.query(LeaveRequest).filter(LeaveRequest.status == LeaveStatus.approved).count()
     total_leaves = db.query(LeaveRequest).count()
@@ -3014,20 +3059,71 @@ def format_relative_time(value: datetime | None) -> str:
 @app.get("/api/reports/charts")
 def reports_chart_data(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     today = date.today()
+
+    # ── Scope to dept head's department ──────────────────────────────
+    if current_user.role == UserRole.department_head:
+        dept_name = get_head_department_name(current_user, db)
+        all_active = db.query(User).filter(User.is_active == True).all()
+        dept_users = [
+            u for u in all_active
+            if u.role == UserRole.employee and get_user_department_name(u, db) == dept_name
+        ] if dept_name else []
+        dept_ids = [int(u.id) for u in dept_users]
+        total_employees = len(dept_users)
+
+        attendance_labels: list[str] = []
+        attendance_values: list[float] = []
+        for day_offset in range(6, -1, -1):
+            current_day = today - timedelta(days=day_offset)
+            attendance_labels.append(current_day.strftime("%a"))
+            if not dept_ids:
+                attendance_values.append(0.0)
+                continue
+            active_count = (
+                db.query(AttendanceRecord.user_id)
+                .filter(
+                    AttendanceRecord.user_id.in_(dept_ids),
+                    AttendanceRecord.record_date == current_day,
+                    AttendanceRecord.status.in_([AttendanceStatus.present, AttendanceStatus.late]),
+                )
+                .distinct()
+                .count()
+            )
+            attendance_values.append(round((active_count / total_employees) * 100, 2) if total_employees else 0.0)
+
+        on_leave_count = (
+            db.query(AttendanceRecord.user_id)
+            .filter(
+                AttendanceRecord.user_id.in_(dept_ids),
+                AttendanceRecord.record_date == today,
+                AttendanceRecord.status == AttendanceStatus.leave,
+            )
+            .distinct()
+            .count()
+        ) if dept_ids else 0
+
+        return {
+            "attendanceTrend": {"labels": attendance_labels, "data": attendance_values},
+            "statusBreakdown": {
+                "labels": ["Active", "On Leave"],
+                "data": [max(total_employees - on_leave_count, 0), int(on_leave_count)],
+            },
+            "departmentDistribution": {"labels": [], "data": []},
+        }
+
+    # ── Global view for other roles ───────────────────────────────────
     employees = db.query(User).filter(User.role == UserRole.employee, User.is_active == True).all()
     total_employees = len(employees)
     employee_ids = [int(item.id) for item in employees]
 
-    attendance_labels: list[str] = []
-    attendance_values: list[float] = []
+    attendance_labels = []
+    attendance_values = []
     for day_offset in range(6, -1, -1):
         current_day = today - timedelta(days=day_offset)
         attendance_labels.append(current_day.strftime("%a"))
-
         if not employee_ids:
             attendance_values.append(0.0)
             continue
-
         active_count = (
             db.query(AttendanceRecord.user_id)
             .filter(
@@ -3067,10 +3163,7 @@ def reports_chart_data(current_user: User = Depends(get_current_user), db: Sessi
         department_values = [int(department_counts.get("Unassigned", 0))]
 
     return {
-        "attendanceTrend": {
-            "labels": attendance_labels,
-            "data": attendance_values,
-        },
+        "attendanceTrend": {"labels": attendance_labels, "data": attendance_values},
         "statusBreakdown": {
             "labels": ["Active", "On Leave", "Inactive", "Department Heads"],
             "data": [
@@ -3080,10 +3173,7 @@ def reports_chart_data(current_user: User = Depends(get_current_user), db: Sessi
                 int(department_head_count),
             ],
         },
-        "departmentDistribution": {
-            "labels": department_labels,
-            "data": department_values,
-        },
+        "departmentDistribution": {"labels": department_labels, "data": department_values},
     }
 
 
@@ -3957,7 +4047,11 @@ def attendance_monitoring(
     week_start = current_week_start - timedelta(days=safe_offset * 7)
     week_end = week_start + timedelta(days=6)
 
-    all_users = db.query(User).filter(User.role != UserRole.admin, User.is_active == True)
+    all_users = db.query(User).filter(
+        User.role != UserRole.admin,
+        User.is_active == True,
+        User.id != int(current_user.id),
+    )
 
     if current_user.role == UserRole.department_head:
         head_department_name = get_head_department_name(current_user, db)
