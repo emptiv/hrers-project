@@ -1,6 +1,7 @@
 from enum import Enum
 
-from sqlalchemy import Boolean, Column, Date, DateTime, Enum as SAEnum, ForeignKey, Integer, LargeBinary, Numeric, String, Text, func
+from sqlalchemy import Boolean, Column, Date, DateTime, Enum as SAEnum, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy.dialects.mysql import LONGBLOB
 
 from database import Base
 
@@ -230,7 +231,7 @@ class ProfileDocument(Base):
     document_name = Column(String(255), nullable=False)
     document_type = Column(String(50), nullable=False)
     status = Column(String(40), nullable=False, default="Submitted")
-    file_content = Column(LargeBinary, nullable=True)
+    file_content = Column(LONGBLOB, nullable=True)
     file_size = Column(Integer, nullable=True)
     reviewed_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     reviewed_by_name = Column(String(150), nullable=True)

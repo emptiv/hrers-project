@@ -9,6 +9,29 @@ let targetEmployeeId = null; // For HR viewing employee documents
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ALLOWED_TYPES = ['pdf', 'docx', 'doc', 'jpg', 'jpeg', 'png'];
 
+async function readResponseBody(response) {
+    const text = await response.text();
+
+    if (!text) {
+        return null;
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+        try {
+            return JSON.parse(text);
+        } catch (error) {
+            return text;
+        }
+    }
+
+    try {
+        return JSON.parse(text);
+    } catch (error) {
+        return text;
+    }
+}
+
 // Initialize modals and event listeners on DOM ready
 document.addEventListener('DOMContentLoaded', () => {
     // Extract employee_id from URL if viewing from HR employee view
@@ -179,13 +202,16 @@ async function handleDocumentUpload(form, modal) {
             body: formData,
         });
 
+        const responseBody = await readResponseBody(response);
+
         if (!response.ok) {
-            const error = await response.json();
-            showNotification(error.detail || 'Upload failed', 'error');
+            const errorMessage = responseBody && typeof responseBody === 'object'
+                ? (responseBody.detail || responseBody.message || 'Upload failed')
+                : (responseBody || 'Upload failed');
+            showNotification(errorMessage, 'error');
             return;
         }
 
-        const result = await response.json();
         showNotification('Document uploaded successfully!', 'success');
         
         // Close modal and reload documents

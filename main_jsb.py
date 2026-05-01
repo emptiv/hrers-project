@@ -1,8 +1,9 @@
 import os
 import csv
+import zipfile
 from collections import defaultdict
 
-from io import StringIO
+from io import BytesIO, StringIO
 
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -180,6 +181,63 @@ def profile_document_to_payload(document: ProfileDocument) -> dict[str, str | No
         "reviewNotes": str(document.review_notes or ""),
         "reviewedAt": document.reviewed_at.isoformat() if document.reviewed_at else None,
     }
+
+
+def infer_profile_document_file_metadata(document: ProfileDocument) -> tuple[str, str]:
+    content = bytes(document.file_content or b"")
+    filename_base = str(document.document_name or "Document").replace('"', "").replace("\\", "").replace("/", "")
+    filename_base = Path(filename_base).stem or "Document"
+
+    file_ext = "bin"
+    media_type = "application/octet-stream"
+
+    if content.startswith(b"%PDF-"):
+        file_ext = "pdf"
+        media_type = "application/pdf"
+    elif content.startswith(b"\xff\xd8\xff"):
+        file_ext = "jpg"
+        media_type = "image/jpeg"
+    elif content.startswith(b"\x89PNG\r\n\x1a\n"):
+        file_ext = "png"
+        media_type = "image/png"
+    elif content.startswith(b"GIF87a") or content.startswith(b"GIF89a"):
+        file_ext = "gif"
+        media_type = "image/gif"
+    elif content.startswith(b"RIFF") and len(content) >= 12 and content[8:12] == b"WEBP":
+        file_ext = "webp"
+        media_type = "image/webp"
+    elif content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        file_ext = "doc"
+        media_type = "application/msword"
+    elif content.startswith(b"PK\x03\x04"):
+        try:
+            with zipfile.ZipFile(BytesIO(content)) as archive:
+                names = set(archive.namelist())
+
+            if any(name.startswith("word/") for name in names):
+                file_ext = "docx"
+                media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            elif any(name.startswith("xl/") for name in names):
+                file_ext = "xlsx"
+                media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            elif any(name.startswith("ppt/") for name in names):
+                file_ext = "pptx"
+                media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            else:
+                file_ext = "zip"
+                media_type = "application/zip"
+        except zipfile.BadZipFile:
+            file_ext = "zip"
+            media_type = "application/zip"
+
+    if file_ext == "bin":
+        filename = filename_base
+    elif filename_base.lower().endswith(f".{file_ext}"):
+        filename = filename_base
+    else:
+        filename = f"{filename_base}.{file_ext}"
+
+    return filename, media_type
 
 
 def build_profile_payload(current_user: User, db: Session) -> dict[str, str | bool]:
@@ -1087,6 +1145,7 @@ async def review_profile_document(
 @app.get("/api/profile/documents/{document_id}/download")
 async def download_profile_document(
     document_id: int,
+    mode: str = "attachment",  # 'attachment' for download, 'inline' for view
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1107,17 +1166,17 @@ async def download_profile_document(
     if not document.file_content:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file not found")
 
-    safe_filename = document.document_name.replace('"', "").replace("\\", "").replace("/", "")
-    file_ext = document.document_type.lower() if document.document_type else "bin"
-    if file_ext in ("pdf", "jpg", "jpeg", "png", "doc", "docx"):
-        filename = f"{safe_filename}.{file_ext}"
+    filename, media_type = infer_profile_document_file_metadata(document)
+
+    if mode.lower() == "inline":
+        disposition = f"inline; filename={filename}"
     else:
-        filename = safe_filename
+        disposition = f"attachment; filename={filename}"
 
     return StreamingResponse(
         iter([document.file_content]),
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        media_type=media_type,
+        headers={"Content-Disposition": disposition},
     )
 
 
