@@ -222,16 +222,14 @@ function closeModal(modal) {
    ================================= */
 
 async function updateReportPreview() {
-    const reportType = document.querySelector('input[name="reportType"]:checked');
-    const department = document.getElementById('customDepartment').value;
-    const startDate = document.getElementById('customDateStart').value;
-    const endDate = document.getElementById('customDateEnd').value;
-    const checkedFields = Array.from(document.querySelectorAll('.checkbox-item input[type="checkbox"]:checked'))
-        .map(cb => cb.nextElementSibling.innerText);
-    
+    const reportTypeEl = document.querySelector('input[name="reportType"]:checked');
+    const department  = document.getElementById('customDepartment')?.value || 'all';
+    const dateStart   = document.getElementById('customDateStart')?.value || '';
+    const dateEnd     = document.getElementById('customDateEnd')?.value || '';
+
     const previewContainer = document.getElementById('reportPreview');
-    
-    if (!reportType) {
+
+    if (!reportTypeEl) {
         previewContainer.innerHTML = `
             <div class="preview-placeholder">
                 <i class="fas fa-eye"></i>
@@ -240,10 +238,24 @@ async function updateReportPreview() {
         `;
         return;
     }
-    
+
+    const reportType = reportTypeEl.value;
+    const fieldDefs  = REPORT_FIELD_DEFS[reportType] || REPORT_FIELD_DEFS['employee-list'];
+
+    // Which fields are checked (or all if none checked)
+    const checkedLabels = Array.from(document.querySelectorAll('.checkbox-item input[type="checkbox"]:checked'))
+        .map(cb => cb.nextElementSibling?.innerText?.trim() || '');
+    const activeDefs = checkedLabels.length > 0
+        ? fieldDefs.filter(f => checkedLabels.some(l => l.toLowerCase() === f.label.toLowerCase()))
+        : fieldDefs;
+
+    const params = new URLSearchParams({ reportType, department });
+    if (dateStart) params.set('dateStart', dateStart);
+    if (dateEnd)   params.set('dateEnd',   dateEnd);
+
     let reportData = [];
     try {
-        const response = await fetch(`/api/reports/preview?reportType=${encodeURIComponent(reportType.value)}&department=${encodeURIComponent(department)}`);
+        const response = await fetch(`/api/reports/preview?${params.toString()}`);
         if (response.ok) {
             const payload = await response.json();
             reportData = payload.items || [];
@@ -251,59 +263,104 @@ async function updateReportPreview() {
     } catch (error) {
         reportData = [];
     }
-    
+
+    const reportLabel = reportTypeEl.nextElementSibling?.innerText || reportType;
     previewContainer.innerHTML = `
         <div class="preview-content">
-            <h4>${reportType.nextElementSibling.innerText} Report</h4>
+            <h4>${reportLabel} Report</h4>
             <p style="color: #64748b; font-size: 0.85rem; margin: 0.5rem 0 1rem 0;">
                 ${department !== 'all' ? `Department: ${department} | ` : ''}
-                ${startDate ? `From: ${startDate} | ` : ''}
-                ${endDate ? `To: ${endDate}` : ''}
+                ${dateStart ? `From: ${dateStart} | ` : ''}
+                ${dateEnd ? `To: ${dateEnd}` : ''}
+                ${reportData.length} record(s)
             </p>
+            <div style="overflow-x:auto;">
             <table class="preview-table">
                 <thead>
                     <tr>
-                        ${checkedFields.map(field => `<th>${field}</th>`).join('')}
+                        ${activeDefs.map(f => `<th>${f.label}</th>`).join('')}
                     </tr>
                 </thead>
                 <tbody>
-                    ${reportData.map(row => `
+                    ${reportData.slice(0, 20).map(row => `
                         <tr>
-                            ${checkedFields.map(field => {
-                                const key = field.toLowerCase().replace(/\s+/g, '-');
-                                return `<td>${row[key] || 'N/A'}</td>`;
-                            }).join('')}
+                            ${activeDefs.map(f => `<td>${row[f.key] ?? 'N/A'}</td>`).join('')}
                         </tr>
                     `).join('')}
+                    ${reportData.length === 0 ? '<tr><td colspan="10" style="text-align:center;color:#64748b;">No data found</td></tr>' : ''}
                 </tbody>
             </table>
+            </div>
+            ${reportData.length > 20 ? `<p style="color:#64748b;font-size:0.8rem;margin-top:0.5rem;">Showing 20 of ${reportData.length} records. Export for full data.</p>` : ''}
         </div>
     `;
 }
 
 
 
-function getSelectedReportConfig() {
-    const reportType = document.querySelector('input[name="reportType"]:checked');
-    const department = document.getElementById('customDepartment')?.value || 'all';
-    const fields = Array.from(document.querySelectorAll('.checkbox-item input[type="checkbox"]:checked'))
-        .map(cb => cb.nextElementSibling.innerText.toLowerCase().replace(/\s+/g, '-'));
+// Per-report-type field definitions matching backend row keys
+const REPORT_FIELD_DEFS = {
+    'employee-list': [
+        { key: 'employee-id', label: 'Employee ID' },
+        { key: 'name',        label: 'Name' },
+        { key: 'department',  label: 'Department' },
+        { key: 'email',       label: 'Email' },
+        { key: 'phone',       label: 'Phone' },
+        { key: 'role',        label: 'Role' },
+        { key: 'date-hired',  label: 'Date Hired' },
+    ],
+    'attendance': [
+        { key: 'employee-id',    label: 'Employee ID' },
+        { key: 'name',           label: 'Name' },
+        { key: 'department',     label: 'Department' },
+        { key: 'present-days',   label: 'Present Days' },
+        { key: 'leave-days',     label: 'Leave Days' },
+        { key: 'total-days',     label: 'Total Days' },
+        { key: 'attendance-rate',label: 'Attendance Rate' },
+    ],
+    'leave': [
+        { key: 'employee-id',       label: 'Employee ID' },
+        { key: 'name',              label: 'Name' },
+        { key: 'department',        label: 'Department' },
+        { key: 'total-requests',    label: 'Total Requests' },
+        { key: 'approved-requests', label: 'Approved' },
+        { key: 'pending-requests',  label: 'Pending' },
+        { key: 'days-used',         label: 'Days Used' },
+    ],
+};
 
-    return { reportType, department, fields };
+function getSelectedReportConfig() {
+    const reportTypeEl = document.querySelector('input[name="reportType"]:checked');
+    const department = document.getElementById('customDepartment')?.value || 'all';
+    const dateStart  = document.getElementById('customDateStart')?.value || '';
+    const dateEnd    = document.getElementById('customDateEnd')?.value || '';
+
+    // Collect checked field keys from the checkboxes
+    const checkedLabels = Array.from(document.querySelectorAll('.checkbox-item input[type="checkbox"]:checked'))
+        .map(cb => cb.nextElementSibling?.innerText?.trim() || '');
+
+    const reportType = reportTypeEl?.value || 'employee-list';
+    const fieldDefs  = REPORT_FIELD_DEFS[reportType] || REPORT_FIELD_DEFS['employee-list'];
+
+    // Map checked labels → backend keys; fallback to all keys if none checked
+    let fields = fieldDefs
+        .filter(f => checkedLabels.length === 0 || checkedLabels.some(l => l.toLowerCase() === f.label.toLowerCase()))
+        .map(f => f.key);
+    if (fields.length === 0) fields = fieldDefs.map(f => f.key);
+
+    return { reportTypeEl, reportType, department, dateStart, dateEnd, fields };
 }
 
 async function downloadReportExport(triggerLabel) {
     const config = getSelectedReportConfig();
-    if (!config.reportType) {
-        showToast('warning', 'Please select a report type', 'No report type selected');
-        return false;
-    }
-    
+
     const params = new URLSearchParams({
-        reportType: config.reportType.value,
+        reportType: config.reportType,
         department: config.department,
-        fields: config.fields.join(','),
+        fields:     config.fields.join(','),
     });
+    if (config.dateStart) params.set('dateStart', config.dateStart);
+    if (config.dateEnd)   params.set('dateEnd',   config.dateEnd);
 
     const response = await fetch(`/api/reports/export?${params.toString()}`);
     if (!response.ok) {
@@ -312,10 +369,10 @@ async function downloadReportExport(triggerLabel) {
     }
 
     const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
+    const url  = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = url;
-    link.download = `${config.reportType.value}_${config.department}_${triggerLabel}.csv`;
+    link.href  = url;
+    link.download = `${config.reportType}_${config.department}_${triggerLabel}.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -325,7 +382,7 @@ async function downloadReportExport(triggerLabel) {
 
 async function handleGenerateReport() {
     const config = getSelectedReportConfig();
-    if (!config.reportType) {
+    if (!config.reportTypeEl) {
         showToast('warning', 'Please select a report type', 'No report type selected');
         return;
     }
@@ -334,7 +391,8 @@ async function handleGenerateReport() {
     try {
         await downloadReportExport('generated');
         removeToast(toastId);
-        showToast('success', 'Report generated successfully!', `Your ${config.reportType.nextElementSibling.innerText} report has been downloaded`, false, 3000);
+        const label = config.reportTypeEl.nextElementSibling?.innerText || config.reportType;
+        showToast('success', 'Report generated successfully!', `Your ${label} report has been downloaded`, false, 3000);
     } catch (error) {
         removeToast(toastId);
         showToast('error', 'Report generation failed', error.message || 'Unable to export report', false, 3000);
@@ -343,7 +401,7 @@ async function handleGenerateReport() {
 
 async function handlePreviewExport() {
     const config = getSelectedReportConfig();
-    if (!config.reportType) {
+    if (!config.reportTypeEl) {
         showToast('warning', 'Please select a report type', 'No report type selected');
         return;
     }
@@ -364,11 +422,23 @@ async function handlePreviewExport() {
    ================================= */
 
 async function handleExport() {
-    const format = document.querySelector('input[name="exportFormat"]:checked')?.value || 'csv';
+    // Top-level Export button: export all employees by default
     const toastId = showToast('info', 'Exporting report...', 'Preparing a live CSV download', true);
 
+    // If no report type is selected in the modal, default to employee-list
+    const reportTypeEl = document.querySelector('input[name="reportType"]:checked');
+    if (!reportTypeEl) {
+        // Force-select employee-list so downloadReportExport works
+        const empListRadio = document.getElementById('empList');
+        if (empListRadio) empListRadio.checked = true;
+    }
+
+    const department = document.getElementById('department')?.value || 'all';
+    const customDept = document.getElementById('customDepartment');
+    if (customDept && !customDept.value) customDept.value = department;
+
     try {
-        await downloadReportExport(format);
+        await downloadReportExport('export');
         removeToast(toastId);
         showToast('success', 'Export complete!', 'Report exported as CSV', false, 3000);
         closeModal(document.getElementById('exportModal'));

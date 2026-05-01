@@ -2895,6 +2895,26 @@ async def decide_position_request(
 @app.get("/api/reports/kpi")
 def reports_kpi(department: str = "all", current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     today = date.today()
+    from datetime import timedelta
+    window_start = today - timedelta(days=30)
+
+    def calc_attendance_rate(user_ids: list[int]) -> float:
+        """Rolling 30-day attendance rate: present+late records / all non-holiday records."""
+        if not user_ids:
+            return 0.0
+        total_records = db.query(AttendanceRecord).filter(
+            AttendanceRecord.user_id.in_(user_ids),
+            AttendanceRecord.record_date >= window_start,
+            AttendanceRecord.record_date <= today,
+            AttendanceRecord.status.notin_([AttendanceStatus.holiday]),
+        ).count()
+        present_records = db.query(AttendanceRecord).filter(
+            AttendanceRecord.user_id.in_(user_ids),
+            AttendanceRecord.record_date >= window_start,
+            AttendanceRecord.record_date <= today,
+            AttendanceRecord.status.in_([AttendanceStatus.present, AttendanceStatus.late]),
+        ).count()
+        return round((present_records / total_records) * 100, 1) if total_records else 0.0
 
     # ── Scope to dept head's department ──────────────────────────────
     if current_user.role == UserRole.department_head:
@@ -2929,7 +2949,7 @@ def reports_kpi(department: str = "all", current_user: User = Depends(get_curren
             .count()
         ) if dept_employee_ids else 0
 
-        attendance_rate = round((present_today / total_employees) * 100, 1) if total_employees else 0.0
+        attendance_rate = calc_attendance_rate(dept_employee_ids)
 
         return {
             "totalEmployees": total_employees,
@@ -2940,16 +2960,13 @@ def reports_kpi(department: str = "all", current_user: User = Depends(get_curren
         }
 
     # ── Global view for other roles ───────────────────────────────────
-    # Broaden scope to include all active users except themselves and admins
     user_query = db.query(User).filter(
         User.role != UserRole.admin,
         User.id != int(current_user.id),
         User.is_active == True
     )
-    
+
     if department != "all":
-        # We need to filter users by department name
-        # Since department is stored in PositionChangeRequest, we can join or filter manually
         all_users = user_query.all()
         needle = department.strip().lower()
         target_user_ids = [int(u.id) for u in all_users if needle in get_user_department_name(u, db).lower()]
@@ -2971,28 +2988,15 @@ def reports_kpi(department: str = "all", current_user: User = Depends(get_curren
     ).count()
     total_departments = db.query(Department).filter(Department.is_active == True).count()
 
-    present_today = (
-        db.query(AttendanceRecord.user_id)
-        .filter(
-            AttendanceRecord.user_id.in_(target_user_ids),
-            AttendanceRecord.record_date == today,
-            AttendanceRecord.status.in_([AttendanceStatus.present, AttendanceStatus.late]),
-        )
-        .distinct()
-        .count()
-    )
-    attendance_rate = round((present_today / total_employees) * 100, 2) if total_employees else 0.0
+    attendance_rate = calc_attendance_rate(target_user_ids)
 
     approved_position_changes = db.query(PositionChangeRequest).filter(PositionChangeRequest.status == PositionChangeStatus.approved).count()
     turnover_rate = round((approved_position_changes / total_employees) * 100, 2) if total_employees else 0.0
-
-
 
     return {
         "totalEmployees": total_employees,
         "attendanceRate": attendance_rate,
         "turnoverRate": turnover_rate,
-
         "summary": {
             "approvedLeaves": approved_leaves,
             "totalLeaves": total_leaves,
@@ -3000,6 +3004,7 @@ def reports_kpi(department: str = "all", current_user: User = Depends(get_curren
             "activeDepartments": total_departments,
         },
     }
+
 
 
 def build_report_rows(report_type: str, department: str, db: Session, current_user: User = None) -> list[dict[str, str]]:
