@@ -164,8 +164,8 @@ function renderProfileDocuments(documents) {
                 <td class="${statusClass}">${status}</td>
                 <td>${date}</td>
                 <td class="actions">
-                    <a href="${url}" target="_blank"><i class="fas fa-eye action-icon"></i></a>
-                    <a href="${url}" download><i class="fas fa-download action-icon"></i></a>
+                    <a href="${url}?mode=inline" target="_blank" title="View"><i class="fas fa-eye action-icon"></i></a>
+                    <a href="${url}?mode=attachment" download title="Download"><i class="fas fa-download action-icon"></i></a>
                 </td>
             </tr>
         `;

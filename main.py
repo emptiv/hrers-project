@@ -361,6 +361,16 @@ def build_universal_user_payload(user: User, db: Session) -> dict[str, str | boo
     payload["name"] = str(user.full_name)
     payload["full_name"] = str(user.full_name)
     payload["employee_no"] = str(user.employee_no or payload.get("employeeNo") or "")
+    
+    # Include documents
+    profile_documents = (
+        db.query(ProfileDocument)
+        .filter(ProfileDocument.user_id == int(user.id))
+        .order_by(ProfileDocument.uploaded_at.desc(), ProfileDocument.id.desc())
+        .all()
+    )
+    payload["documents"] = [profile_document_to_payload(doc) for doc in profile_documents]
+    
     return payload
 
 

@@ -126,8 +126,28 @@ function applyProfileToView(profile) {
     const docBody = document.querySelector('.doc-table tbody');
 
     if (docBody) {
-        docBody.innerHTML =
-            '<tr><td colspan="5" style="text-align:center; padding:2rem;">No document records in database.</td></tr>';
+        const documents = profile.documents || [];
+        
+        if (!documents.length) {
+            docBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:2rem; color:#999;">No documents uploaded yet.</td></tr>';
+        } else {
+            docBody.innerHTML = documents.map((doc) => {
+                const statusClass = doc.status && doc.status.toLowerCase() === 'approved' ? 'valid' : 
+                                   (doc.status && doc.status.toLowerCase() === 'rejected' ? 'missing' : 'update');
+                return `
+                    <tr>
+                        <td>${doc.name || 'Document'}</td>
+                        <td>${doc.type || 'FILE'}</td>
+                        <td class="${statusClass}">${doc.status || 'Submitted'}</td>
+                        <td>${doc.dateUploaded || '--'}</td>
+                        <td class="actions">
+                            ${doc.url ? `<a href="${doc.url}?mode=inline" target="_blank" title="View"><i class="fas fa-eye action-icon"></i></a>
+                                        <a href="${doc.url}?mode=attachment" download title="Download"><i class="fas fa-download action-icon"></i></a>` : '---'}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
     }
 
     // =========================

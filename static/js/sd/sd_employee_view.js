@@ -215,8 +215,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         <td class="action-cell">
                             ${
                                 d.url
-                                    ? `<a href="${d.url}" target="_blank"><i class="fas fa-eye"></i></a>
-                                       <a href="${d.url}" download><i class="fas fa-download"></i></a>`
+                                    ? `<a href="${d.url}?mode=inline" target="_blank" title="View"><i class="fas fa-eye action-icon"></i></a>
+                                       <a href="${d.url}?mode=attachment" download title="Download"><i class="fas fa-download action-icon"></i></a>`
                                     : '---'
                             }
                         </td>

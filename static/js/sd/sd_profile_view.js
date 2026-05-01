@@ -75,35 +75,38 @@ function applyProfileToView(profile) {
 
     document.getElementById('deptName').textContent =
         profile.department || '--';
-}
+
+    // =========================
+    // RENDER DOCUMENTS
+    // =========================
+    const docBody = document.querySelector('.doc-table tbody');
+    if (docBody) {
+        const documents = profile.documents || [];
+        
+        if (!documents.length) {
+            docBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:2rem; color:#999;">No documents uploaded yet.</td></tr>';
+        } else {
+            docBody.innerHTML = documents.map((doc) => {
+                const statusClass = doc.status && doc.status.toLowerCase() === 'approved' ? 'valid' : 
+                                   (doc.status && doc.status.toLowerCase() === 'rejected' ? 'missing' : 'update');
+                return `
+                    <tr>
+                        <td>${doc.name || 'Document'}</td>
+                        <td>${doc.type || 'FILE'}</td>
+                        <td class="${statusClass}">${doc.status || 'Submitted'}</td>
+                        <td>${doc.dateUploaded || '--'}</td>
+                        <td class="actions">
+                            ${doc.url ? `<a href="${doc.url}?mode=inline" target="_blank" title="View"><i class="fas fa-eye action-icon"></i></a>
+                                        <a href="${doc.url}?mode=attachment" download title="Download"><i class="fas fa-download action-icon"></i></a>` : '---'}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+    }
 
 /* =========================
-   HARD CODED EMPLOYMENT HISTORY (FORCED DISPLAY)
-   ========================= */
-function loadEmploymentHistory() {
-    const container = document.getElementById('timelineContainer');
-
-    container.innerHTML = `
-        <div class="timeline-item">
-            <div class="timeline-date">2026</div>
-            <div class="timeline-content">
-                <h4>Joined as a School Director</h4>
-                <p>Account successfully created and assigned role</p>
-            </div>
-        </div>
-
-        <div class="timeline-item">
-            <div class="timeline-date">2026</div>
-            <div class="timeline-content">
-                <h4>Account Created</h4>
-                <p>User account was created in the system</p>
-            </div>
-        </div>
-    `;
-}
-
-/* =========================
-   LOAD PROFILE (OPTIONAL BACKEND)
+   LOAD PROFILE (WITH HISTORY AND DOCUMENTS)
    ========================= */
 async function loadProfileViewData() {
     try {
@@ -114,7 +117,46 @@ async function loadProfileViewData() {
         if (!response.ok) return;
 
         const profile = await response.json();
+
+        // Load employment history
+        try {
+            const historyResponse = await fetch('/api/employment-history');
+            if (historyResponse.ok) {
+                const historyData = await historyResponse.json();
+                profile.history = historyData.items || [];
+            }
+        } catch (err) {
+            console.log(err);
+        }
+
         applyProfileToView(profile);
+        
+        // Load employment history into timeline
+        const container = document.getElementById('timelineContainer');
+        if (container) {
+            const history = profile.history || [];
+            if (history.length === 0) {
+                container.innerHTML = `
+                    <div class="timeline-item">
+                        <div class="timeline-date">--</div>
+                        <div class="timeline-content">
+                            <h4>No history available</h4>
+                            <p>Employment history has not been recorded yet.</p>
+                        </div>
+                    </div>
+                `;
+            } else {
+                container.innerHTML = history.map(item => `
+                    <div class="timeline-item">
+                        <div class="timeline-date">${item.event_date || '--'}</div>
+                        <div class="timeline-content">
+                            <h4>${item.event_title || 'History Event'}</h4>
+                            <p>${item.event_description || '--'}</p>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        }
 
     } catch (err) {
         console.error(err);
@@ -127,5 +169,4 @@ async function loadProfileViewData() {
 document.addEventListener('DOMContentLoaded', () => {
     setupProfileViewPage();
     loadProfileViewData();
-    loadEmploymentHistory(); // IMPORTANT
 });
