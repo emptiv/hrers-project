@@ -194,9 +194,9 @@ hr {
 
 /* --- 3. MAIN CONTENT & WHITE CONTAINER --- */
 .main-content {
-    margin-left: 340px;   /* 300px sidebar + 20px sidebar-left + 20px gap */
+    margin-left: 320px;   /* 300px sidebar + 20px gap */
     height: 100vh;
-    padding: 20px;
+    padding: 0;
     display: flex;
     justify-content: center;   /* horizontally centers the white card */
     align-items: stretch;
@@ -204,16 +204,17 @@ hr {
 }
 
 .sidebar.collapsed ~ .main-content {
-    margin-left: 130px;   /* 90px sidebar + 20px + 20px gap */
+    margin-left: 110px;   /* 90px sidebar + 20px gap */
 }
 
 .white-container {
     background: #fdfdfd;
     width: 100%;
-    max-width: 1400px;
-    height: 100%;
+    max-width: 100%;
+    height: auto;
     border-radius: 25px;
-    padding: 35px 40px;
+    padding: 35px 25px;
+    margin: 20px;
     overflow-y: auto;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
 }
