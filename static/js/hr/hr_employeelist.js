@@ -97,9 +97,28 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
+    async function loadPositions() {
+        try {
+            const response = await fetch('/api/positions');
+            if (response.ok) {
+                const payload = await response.json();
+                const items = payload.items || [];
+                // Keep the "All" option
+                filterPosition.innerHTML = '<option value="">All</option>';
+                items.forEach(pos => {
+                    const opt = document.createElement('option');
+                    opt.value = pos;
+                    opt.textContent = pos;
+                    filterPosition.appendChild(opt);
+                });
+            }
+        } catch (error) {}
+    }
+
     searchInput.addEventListener('input', renderTable);
     if (filterPosition) filterPosition.addEventListener('change', renderTable);
     if (filterStatus) filterStatus.addEventListener('change', renderTable);
 
+    loadPositions();
     loadEmployees();
 });

@@ -2479,6 +2479,26 @@ def list_employees(
     return {"items": [build_employee_detail_payload(user, db) for user in users]}
 
 
+@app.get("/api/positions")
+def list_positions(db: Session = Depends(get_db)):
+    # Fetch unique positions from PositionChangeRequest
+    positions_from_requests = db.query(PositionChangeRequest.current_position).distinct().all()
+    requested_positions = db.query(PositionChangeRequest.requested_position).distinct().all()
+    
+    unique_positions = set()
+    for (p,) in positions_from_requests:
+        if p: unique_positions.add(str(p).strip())
+    for (p,) in requested_positions:
+        if p: unique_positions.add(str(p).strip())
+        
+    # Add default roles (formatted)
+    for role in UserRole:
+        unique_positions.add(str(role.value).replace("_", " ").title())
+        
+    sorted_positions = sorted(list(unique_positions))
+    return {"items": sorted_positions}
+
+
 @app.get("/api/employees/{employee_id}")
 def get_employee_detail(
     employee_id: int,
