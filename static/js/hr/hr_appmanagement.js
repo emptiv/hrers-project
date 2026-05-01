@@ -5,6 +5,11 @@
 
 const hrName = 'HR Manager';
 const HR_STAGE = 'pending-hr';
+
+// Determine which position stage the current logged-in user may act on
+const _currentUserRole = (localStorage.getItem('hrers_role') || '').toLowerCase();
+const POSITION_ACTIONABLE_STAGE = _currentUserRole === 'hr_head' ? 'pending-hr-head' : 'pending-hr-evaluator';
+
 let activeAppId = null;
 let activeAppFilter = '';
 let activeAppFilterLabel = '';
@@ -88,8 +93,38 @@ function mapLeaveToApp(item) {
     };
 }
 
+// Map a position change request from the API into a display object for HR Evaluator.
+// Stage progression: hr_evaluator → hr_head → school_director → completed
+function mapPositionStageForHr(item) {
+    var status = (item.status || '').toLowerCase();
+    if (status === 'approved') return 'approved';
+    if (status === 'rejected') return 'rejected';
+
+    var stage = (item.approvalStage || '').toLowerCase();
+    if (stage === 'hr_evaluator') return 'pending-hr-evaluator';
+    if (stage === 'hr_head')      return 'pending-hr-head';
+    if (stage === 'school_director') return 'pending-sd';
+    return 'pending-hr-evaluator'; // default
+}
+
+function getPositionStageLabelForHr(normalizedStatus) {
+    var labels = {
+        'pending-hr-evaluator': 'Pending - HR Evaluator',
+        'pending-hr-head':      'Pending - HR Head',
+        'pending-sd':           'Pending - School Director',
+        'approved':             'Approved',
+        'rejected':             'Rejected'
+    };
+    return labels[normalizedStatus] || 'Pending';
+}
+
 function mapPositionToApp(item) {
-    var normalizedStatus = mapStatusForHr((item.status || '').toLowerCase());
+    var normalizedStatus = mapPositionStageForHr(item);
+    var statusLabel = getPositionStageLabelForHr(normalizedStatus);
+    // HR Evaluator can only act when the request is at the hr_evaluator stage.
+    // HR Head can only act when the request is at the hr_head stage.
+    // This is resolved at runtime from the logged-in user's role (localStorage).
+    var canAct = normalizedStatus === POSITION_ACTIONABLE_STAGE;
     return {
         id: 'PCR-' + item.id,
         sourceType: 'position',
@@ -102,13 +137,14 @@ function mapPositionToApp(item) {
         effectiveDate: item.effectiveDate || '--',
         reason: item.reason || '--',
         submitted: item.submittedAt ? new Date(item.submittedAt).toLocaleDateString() : '---',
-        progress: normalizedStatus === 'pending-hr' ? 'In Review' : 'Completed',
+        progress: canAct ? 'In Review' : (normalizedStatus === 'approved' || normalizedStatus === 'rejected' ? 'Completed' : 'Awaiting Next Stage'),
         status: normalizedStatus,
-        statusLabel: normalizedStatus === 'pending-hr' ? 'Pending - HR Evaluator' : (normalizedStatus === 'approved' ? 'Approved' : 'Rejected'),
+        statusLabel: statusLabel,
         reviewedBy: item.reviewedBy || '---',
         remarks: item.reviewRemarks || 'Awaiting review.',
         headRemarks: item.reviewRemarks || '---',
-        fileName: 'Position_Change_' + item.id + '.pdf'
+        fileName: 'Position_Change_' + item.id + '.pdf',
+        _canAct: canAct
     };
 }
 
@@ -139,8 +175,14 @@ function isFinalStatus(status) {
     return status === 'approved' || status === 'rejected';
 }
 
+// For leave requests HR_STAGE is 'pending-hr'. For position requests, we use _canAct flag instead.
 function canActOnApp(status) {
     return status === HR_STAGE;
+}
+
+// Determine if the current reviewer (HR Evaluator) can act on a position change record
+function canActOnPositionRecord(app) {
+    return !!(app && app._canAct);
 }
 
 function findRecordById(id) {
@@ -377,9 +419,10 @@ function renderRows(rows) {
     }
 
     rows.forEach(function (app) {
-        const clone   = template.content.cloneNode(true);
-        const isFinal = isFinalStatus(app.status);
-        const canAct  = canActOnApp(app.status);
+        const clone      = template.content.cloneNode(true);
+        const isFinal    = isFinalStatus(app.status);
+        // For position records use the _canAct flag; for leave records use canActOnApp
+        const canAct     = isPositionChangeRecord(app) ? canActOnPositionRecord(app) : canActOnApp(app.status);
 
         clone.querySelector('.col-id').innerText   = app.id;
         clone.querySelector('.col-name').innerText = app.name;
@@ -396,7 +439,7 @@ function renderRows(rows) {
             clone.querySelector('.col-progress').innerText  = app.progress;
         }
 
-        clone.querySelector('.col-status').innerHTML    =
+        clone.querySelector('.col-status').innerHTML =
             '<span class="status-pill ' + app.status + '">' + app.statusLabel + '</span>';
 
         const actionsCell = clone.querySelector('.col-actions');
@@ -431,7 +474,12 @@ function renderRows(rows) {
                 processApp(app.id, 'Rejected');
             });
         } else {
-            actionsCell.innerHTML = '<div class="actions-cell"><span class="action-link view-link-btn">View Details</span></div>';
+            // Not this reviewer's stage — show View only with a stage label
+            var stageNote = '';
+            if (isPositionChangeRecord(app) && !isFinal) {
+                stageNote = ' <span style="font-size:0.75em;color:#888;">(' + app.statusLabel + ')</span>';
+            }
+            actionsCell.innerHTML = '<div class="actions-cell"><span class="action-link view-link-btn">View Details</span>' + stageNote + '</div>';
             actionsCell.querySelector('.view-link-btn').addEventListener('click', function () {
                 openModal(app.id);
             });
@@ -674,9 +722,10 @@ function openModal(id) {
     renderStatusHistory(app);
     updateModalDocPage();
 
-    // Only show Approve/Reject if it's HR's stage
+    // Show Approve/Reject only when it's this reviewer's turn
+    var modalCanAct = isPositionChangeRecord(app) ? canActOnPositionRecord(app) : canActOnApp(app.status);
     document.getElementById('modalActions').style.display =
-        (!isFinalStatus(app.status) && canActOnApp(app.status)) ? 'flex' : 'none';
+        (!isFinalStatus(app.status) && modalCanAct) ? 'flex' : 'none';
 
     document.getElementById('viewModal').style.display = 'flex';
 }
@@ -690,10 +739,11 @@ async function processApp(id, decision) {
     const app = findRecordById(id);
     if (!app) return;
 
-    // Guard: only allow action if it's HR's stage
-    if (!canActOnApp(app.status)) {
+    // Client-side guard: only allow action if it's this reviewer's stage
+    var localCanAct = isPositionChangeRecord(app) ? canActOnPositionRecord(app) : canActOnApp(app.status);
+    if (!localCanAct) {
         showToast('info', 'Action Not Allowed',
-            'This application is not at the HR evaluation stage.');
+            'This request is not at your approval stage. Current stage: ' + app.statusLabel);
         return;
     }
 
@@ -708,19 +758,25 @@ async function processApp(id, decision) {
     try {
         var response = await fetch(endpoint, { method: 'POST', body: formData });
         if (!response.ok) {
-            throw new Error('Failed to update request');
+            var errData = {};
+            try { errData = await response.json(); } catch (e) {}
+            throw new Error(errData.detail || 'Failed to update request.');
         }
 
+        var result = await response.json();
         await refreshAppManagementData();
+        closeViewModal();
         renderCurrentTab();
 
+        var isApproved = decision === 'Approved';
+        var isPosition = app.sourceType === 'position';
         showToast(
-            decision === 'Approved' ? 'success' : 'info',
-            decision === 'Approved' ? 'Application Approved' : 'Application Rejected',
-            app.name + (decision === 'Approved' ? "'s request has been approved." : "'s request has been rejected.")
+            isApproved ? 'approved' : 'rejected',
+            isApproved ? (isPosition ? 'Request Forwarded' : 'Application Approved') : 'Request Rejected',
+            result.message || (app.name + (isApproved ? "'s request has been forwarded to the next approver." : "'s request has been rejected."))
         );
     } catch (error) {
-        showToast('info', 'Update Failed', 'Unable to process this request right now.');
+        showToast('info', 'Update Failed', error.message || 'Unable to process this request right now.');
     }
 }
 

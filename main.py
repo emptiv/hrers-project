@@ -2531,9 +2531,31 @@ async def create_position_request(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Only employees may file a position change request
+    if current_user.role != UserRole.employee:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only employees may file a position change request.",
+        )
+
+    # Block if the employee already has an active (pending) request
+    existing_pending = (
+        db.query(PositionChangeRequest)
+        .filter(
+            PositionChangeRequest.requester_user_id == int(current_user.id),
+            PositionChangeRequest.status == PositionChangeStatus.pending,
+        )
+        .first()
+    )
+    if existing_pending:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You already have a pending position change request. Please wait for it to be resolved before submitting a new one.",
+        )
+
     form = await request.form()
-    employee_name = str(form.get("employee_name") or "").strip() or str(current_user.full_name)
-    employee_no = str(form.get("employee_no") or "").strip() or None
+    employee_name = str(current_user.full_name)  # always use the authenticated user's name
+    employee_no = str(current_user.employee_no or "").strip() or None
     current_position = str(form.get("current_position") or "").strip() or None
     current_department = str(form.get("current_department") or "").strip() or None
     requested_position = str(form.get("requested_position") or "").strip()
@@ -2618,57 +2640,120 @@ async def decide_position_request(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Only HR Evaluator, HR Head, and School Director can review position requests
+    if current_user.role not in {UserRole.hr_evaluator, UserRole.hr_head, UserRole.school_director}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only HR Evaluator, HR Head, or School Director may review position requests.",
+        )
+
     item = db.query(PositionChangeRequest).filter(PositionChangeRequest.id == request_id).first()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Position request not found")
 
-    if not can_review_position_request(current_user, item):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to review this request")
+    # Reviewer cannot review their own request
+    if item.requester_user_id == int(current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You cannot review your own position change request.",
+        )
+
+    # Request must still be pending
+    if item.status != PositionChangeStatus.pending:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This request has already been resolved and can no longer be reviewed.",
+        )
+
+    approval_stage = str(item.approval_stage or PositionChangeApprovalStage.hr_evaluator.value)
+
+    # Strictly enforce stage-to-role: each role may only act on their own stage
+    if approval_stage == PositionChangeApprovalStage.hr_evaluator.value:
+        if current_user.role != UserRole.hr_evaluator:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This request is awaiting HR Evaluator review. Only an HR Evaluator can act on it at this stage.",
+            )
+    elif approval_stage == PositionChangeApprovalStage.hr_head.value:
+        if current_user.role != UserRole.hr_head:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This request is awaiting HR Head review. Only an HR Head can act on it at this stage.",
+            )
+    elif approval_stage == PositionChangeApprovalStage.school_director.value:
+        if current_user.role != UserRole.school_director:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This request is awaiting School Director review. Only the School Director can act on it at this stage.",
+            )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This request is no longer pending review.",
+        )
 
     form = await request.form()
     decision_raw = str(form.get("decision") or "").strip().lower()
     remarks = str(form.get("remarks") or "").strip()
 
     if decision_raw not in {"approved", "rejected"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid decision")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Decision must be 'approved' or 'rejected'.")
 
-    approval_stage = str(item.approval_stage or PositionChangeApprovalStage.hr_evaluator.value)
     today_text = date.today().isoformat()
 
+    # ── Stage 1: HR Evaluator ──────────────────────────────────────────────────
     if approval_stage == PositionChangeApprovalStage.hr_evaluator.value:
+        item.reviewed_by_user_id = int(current_user.id)
+        item.reviewed_by_name = str(current_user.full_name)
         if decision_raw == "approved":
+            # Advance to HR Head stage
             item.approval_stage = PositionChangeApprovalStage.hr_head.value
             item.review_remarks = remarks or f"Approved by HR Evaluator {current_user.full_name} on {today_text}. Awaiting HR Head review."
+            message = "Request forwarded to HR Head."
         else:
             item.status = PositionChangeStatus.rejected
             item.approval_stage = PositionChangeApprovalStage.completed.value
             item.review_remarks = remarks or f"Rejected by HR Evaluator {current_user.full_name} on {today_text}."
+            message = "Request rejected."
+
+    # ── Stage 2: HR Head ──────────────────────────────────────────────────────
     elif approval_stage == PositionChangeApprovalStage.hr_head.value:
+        item.reviewed_by_user_id = int(current_user.id)
+        item.reviewed_by_name = str(current_user.full_name)
         if decision_raw == "approved":
+            # Advance to School Director stage
             item.approval_stage = PositionChangeApprovalStage.school_director.value
             item.review_remarks = remarks or f"Approved by HR Head {current_user.full_name} on {today_text}. Awaiting School Director review."
+            message = "Request forwarded to School Director."
         else:
             item.status = PositionChangeStatus.rejected
             item.approval_stage = PositionChangeApprovalStage.completed.value
             item.review_remarks = remarks or f"Rejected by HR Head {current_user.full_name} on {today_text}."
+            message = "Request rejected."
+
+    # ── Stage 3: School Director (Final) ─────────────────────────────────────
     elif approval_stage == PositionChangeApprovalStage.school_director.value:
+        item.reviewed_by_user_id = int(current_user.id)
+        item.reviewed_by_name = str(current_user.full_name)
         if decision_raw == "approved":
+            # Fully approved — update employee's position on their profile record
             item.status = PositionChangeStatus.approved
             item.approval_stage = PositionChangeApprovalStage.completed.value
             item.current_position = item.requested_position
-            item.review_remarks = remarks or f"Approved by School Director {current_user.full_name} on {today_text}. Position updated to {item.requested_position}."
+            item.review_remarks = remarks or (
+                f"Fully approved by School Director {current_user.full_name} on {today_text}. "
+                f"Position updated to {item.requested_position}."
+            )
+            message = "Request fully approved. Employee position updated."
         else:
             item.status = PositionChangeStatus.rejected
             item.approval_stage = PositionChangeApprovalStage.completed.value
             item.review_remarks = remarks or f"Rejected by School Director {current_user.full_name} on {today_text}."
-    else:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This request is no longer pending review.")
+            message = "Request rejected."
 
-    item.reviewed_by_user_id = int(current_user.id)
-    item.reviewed_by_name = str(current_user.full_name)
     db.commit()
     db.refresh(item)
-    return {"message": f"Request {item.status.value.lower()}.", "request": position_change_to_payload(item)}
+    return {"message": message, "request": position_change_to_payload(item)}
 
 
 @app.get("/api/reports/kpi")

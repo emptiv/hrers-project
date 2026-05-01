@@ -124,16 +124,44 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        // Stage order for the progress pipeline display
+        const STAGES = [
+            { key: 'hr_evaluator',    label: 'HR Evaluator' },
+            { key: 'hr_head',         label: 'HR Head'      },
+            { key: 'school_director', label: 'School Director' }
+        ];
+
+        function buildPipeline(item) {
+            if (item.status === 'Approved') {
+                return '<span style="color:#16a34a;font-weight:600;">&#10003; Fully Approved</span>';
+            }
+            if (item.status === 'Rejected') {
+                return '<span style="color:#dc2626;font-weight:600;">&#10007; Rejected</span>';
+            }
+            var stage = (item.approvalStage || 'hr_evaluator').toLowerCase();
+            return STAGES.map(function(s) {
+                var done    = false;
+                var current = false;
+                if (stage === 'hr_head')         { done = s.key === 'hr_evaluator'; current = s.key === 'hr_head'; }
+                else if (stage === 'school_director') { done = s.key === 'hr_evaluator' || s.key === 'hr_head'; current = s.key === 'school_director'; }
+                else { current = s.key === 'hr_evaluator'; }
+                var color  = done ? '#16a34a' : (current ? '#2563eb' : '#9ca3af');
+                var weight = current ? '700' : '400';
+                var dot    = done ? '&#10003;' : (current ? '&#9679;' : '&#9675;');
+                return '<span style="color:' + color + ';font-weight:' + weight + ';margin-right:6px;">' + dot + ' ' + s.label + '</span>';
+            }).join('<span style="color:#d1d5db;margin-right:6px;">&rsaquo;</span>');
+        }
+
         let html = `
             <table class="records-table" style="width:100%; border-collapse:collapse;">
                 <thead>
                     <tr style="text-align:left; border-bottom:1px solid #ddd;">
-                        <th>Request ID</th>
-                        <th>Submitted</th>
-                        <th>Requested Position</th>
-                        <th>Effective Date</th>
-                        <th>Status</th>
-                        <th>Remarks</th>
+                        <th style="padding:8px;">Request ID</th>
+                        <th style="padding:8px;">Submitted</th>
+                        <th style="padding:8px;">Requested Position</th>
+                        <th style="padding:8px;">Effective Date</th>
+                        <th style="padding:8px;">Approval Progress</th>
+                        <th style="padding:8px;">Remarks</th>
                     </tr>
                 </thead>
                 <tbody>`;
@@ -141,15 +169,15 @@ document.addEventListener('DOMContentLoaded', () => {
         items.forEach(item => {
             const requestId = 'PCR-' + (item.id || '---');
             const submitted = item.submittedAt ? new Date(item.submittedAt).toLocaleDateString() : '';
-            const eff = item.effectiveDate ? new Date(item.effectiveDate).toLocaleDateString() : '';
-            const remarks = item.reviewRemarks || '';
+            const eff       = item.effectiveDate ? new Date(item.effectiveDate).toLocaleDateString() : '';
+            const remarks   = item.reviewRemarks || '';
             html += `<tr style="border-bottom:1px solid #f2f2f2;">
                 <td style="padding:8px; vertical-align:top; font-weight:600;">${escapeHtml(requestId)}</td>
                 <td style="padding:8px; vertical-align:top;">${submitted}</td>
                 <td style="padding:8px; vertical-align:top;">${escapeHtml(item.requestedPosition || '')}</td>
                 <td style="padding:8px; vertical-align:top;">${eff}</td>
-                <td style="padding:8px; vertical-align:top;">${escapeHtml(item.status || '')}</td>
-                <td style="padding:8px; vertical-align:top;">${escapeHtml(remarks)}</td>
+                <td style="padding:8px; vertical-align:top; font-size:0.85em;">${buildPipeline(item)}</td>
+                <td style="padding:8px; vertical-align:top; font-size:0.85em;">${escapeHtml(remarks)}</td>
             </tr>`;
         });
 
@@ -175,28 +203,28 @@ document.addEventListener('DOMContentLoaded', () => {
         positionForm.addEventListener('submit', async (event) => {
             event.preventDefault();
 
-            const empName = document.getElementById('empName').value.trim();
-            const empId = document.getElementById('empId').value.trim();
-            const currentPos = document.getElementById('currentPos').value.trim();
-            const currentDept = document.getElementById('currentDept').value.trim();
+            const empName      = document.getElementById('empName').value.trim();
+            const currentPos   = document.getElementById('currentPos').value.trim();
+            const currentDept  = document.getElementById('currentDept').value.trim();
             const requestedPos = document.getElementById('requestedPos').value;
             const effectiveDate = document.getElementById('effectiveDate').value;
-            const reason = document.getElementById('reason').value.trim();
+            const reason       = document.getElementById('reason').value.trim();
 
             if (!empName || !requestedPos || !effectiveDate || !reason) {
                 showToast('Please fill in all required fields.');
                 return;
             }
 
-            // Prepare form data for API submission
+            // Prepare form data — employee_no is not sent; backend reads it from session
             const formData = new FormData();
-            formData.append('employee_name', empName);
-            formData.append('employee_no', empId);
-            formData.append('current_position', currentPos);
+            formData.append('current_position',   currentPos);
             formData.append('current_department', currentDept);
             formData.append('requested_position', requestedPos);
-            formData.append('effective_date', effectiveDate);
-            formData.append('reason', reason);
+            formData.append('effective_date',     effectiveDate);
+            formData.append('reason',             reason);
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Submitting...';
 
             try {
                 const response = await fetch('/api/position-requests', {
@@ -205,19 +233,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
 
                 if (response.ok) {
-                    const result = await response.json();
-                    showSuccessNotification('Request successfully submitted and is now awaiting HR review.');
+                    showSuccessNotification('Request successfully submitted. Awaiting HR Evaluator review.');
                     resetForm();
-                    // After 2 seconds, redirect to records view
-                    setTimeout(() => {
-                        showRecordsView();
-                    }, 2000);
+                    setTimeout(() => { showRecordsView(); }, 2000);
                 } else {
                     const error = await response.json();
+                    // Surface specific backend error messages (e.g., already has pending request)
                     showToast(error.detail || 'Failed to submit request. Please try again.');
                 }
             } catch (error) {
                 showToast('An error occurred while submitting your request. Please try again.');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Submit';
             }
         });
     }
