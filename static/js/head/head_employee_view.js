@@ -4,156 +4,219 @@ document.addEventListener('DOMContentLoaded', () => {
     const closeBtn = document.getElementById('closeBtn');
     const menuItems = document.querySelectorAll('.menu-item');
 
-    // =========================
-    // TOOLTIP FIX
-    // =========================
-    menuItems.forEach(item => {
+    menuItems.forEach((item) => {
         const span = item.querySelector('span');
         if (span) {
             item.setAttribute('data-text', span.innerText.trim());
         }
     });
 
-    // =========================
-    // SIDEBAR TOGGLE
-    // =========================
-    if (logoToggle) {
+    if (logoToggle && sidebar) {
         logoToggle.onclick = () => sidebar.classList.toggle('close');
     }
-    if (closeBtn) {
+
+    if (closeBtn && sidebar) {
         closeBtn.onclick = () => sidebar.classList.add('close');
     }
 
-    // =========================
-    // TAB SYSTEM
-    // =========================
     const tabs = document.querySelectorAll('.tab');
     const tabContents = document.querySelectorAll('.tab-content-item');
 
-    tabs.forEach(tab => {
+    tabs.forEach((tab) => {
         tab.addEventListener('click', () => {
-            tabs.forEach(t => t.classList.remove('active'));
+            tabs.forEach((currentTab) => currentTab.classList.remove('active'));
             tab.classList.add('active');
-            tabContents.forEach(c => c.classList.remove('active'));
+            tabContents.forEach((content) => content.classList.remove('active'));
 
             const targetId = tab.getAttribute('data-tab');
             const targetContent = document.getElementById(targetId);
-            if (targetContent) targetContent.classList.add('active');
+            if (targetContent) {
+                targetContent.classList.add('active');
+            }
         });
     });
 
-    // =========================
-    // HELPERS
-    // =========================
     function getQueryParam(name) {
         return new URLSearchParams(window.location.search).get(name);
     }
 
-    function normalizeRole(role) {
-        return (role || "").toString().trim();
+    function normalizeText(value) {
+        return (value || '').toString().trim();
     }
 
-    // =========================
-    // HARD CODED HISTORY (FINAL FIX)
-    // =========================
-    function buildHistory(role) {
-        return [
-            {
-                year: "2026",
-                title: `Joined as ${role}`,
-                description: `Joined as ${role} in Head Office Department.`
-            },
-            {
-                year: "2026",
-                title: "Account Created",
-                description: "User account was created in the system and assigned role access."
-            }
-        ];
+    function escapeHtml(value) {
+        return (value || '')
+            .toString()
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#39;');
     }
 
-    // =========================
-    // RENDER HISTORY (FORCE OVERRIDE)
-    // =========================
-    function renderHistory(role) {
+    function setText(selector, value) {
+        const element = document.querySelector(selector);
+        if (element) {
+            element.textContent = value || '--';
+        }
+    }
+
+    function renderDepartment(profile) {
+        const departmentInfo = profile.departmentInfo || {};
+        const departmentName = departmentInfo.name || profile.department || '--';
+
+        setText('#departmentName', departmentName);
+        setText('#departmentId', departmentInfo.id ? String(departmentInfo.id) : '--');
+        setText('#departmentLocation', departmentInfo.location || '--');
+        setText('#departmentEmail', departmentInfo.email || '--');
+        setText('#departmentHead', departmentInfo.headName || '--');
+    }
+
+    function renderDocuments(profile) {
+        const docHeader = document.getElementById('documentHeader');
+        const tbody = document.querySelector('.doc-table tbody');
+        const documents = Array.isArray(profile.documents) ? profile.documents : [];
+
+        if (!tbody) {
+            return;
+        }
+
+        if (docHeader) {
+            docHeader.textContent = documents.length
+                ? `${documents.length} document(s) available`
+                : 'No documents uploaded yet';
+        }
+
+        if (!documents.length) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="5" style="text-align:center; padding:2rem; color:#777;">No documents uploaded yet.</td>
+                </tr>
+            `;
+            return;
+        }
+
+        tbody.innerHTML = documents.map((doc) => {
+            const status = normalizeText(doc.status || 'Submitted');
+            const statusClass = status.toLowerCase() === 'approved'
+                ? 'valid'
+                : (status.toLowerCase() === 'rejected' ? 'missing' : 'update');
+            const viewUrl = doc.url ? `${doc.url}?mode=inline` : '';
+
+            return `
+                <tr>
+                    <td>${escapeHtml(doc.name || 'Document')}</td>
+                    <td>${escapeHtml(doc.type || 'FILE')}</td>
+                    <td class="${statusClass}">${escapeHtml(status)}</td>
+                    <td>${escapeHtml(doc.dateUploaded || '--')}</td>
+                    <td class="actions">
+                        ${viewUrl ? `<a href="${escapeHtml(viewUrl)}" target="_blank" rel="noopener noreferrer" title="View"><i class="fas fa-eye action-icon"></i></a>` : '--'}
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    function renderHistory(profile) {
         const timeline = document.getElementById('timelineContainer');
+        const history = Array.isArray(profile.history) ? profile.history : [];
 
-        if (!timeline) return;
+        if (!timeline) {
+            return;
+        }
 
-        const history = buildHistory(role);
-
-        timeline.innerHTML = ""; // IMPORTANT: wipes HTML fallback completely
-
-        history.forEach(h => {
-            const item = document.createElement('div');
-            item.className = 'timeline-item';
-
-            item.innerHTML = `
-                <div class="timeline-date">${h.year}</div>
-                <div class="timeline-content">
-                    <h4>${h.title}</h4>
-                    <p>${h.description}</p>
+        if (!history.length) {
+            timeline.innerHTML = `
+                <div class="timeline-item">
+                    <div class="timeline-date">--</div>
+                    <div class="timeline-content">
+                        <h4>No history available</h4>
+                        <p>Employment history has not been recorded yet.</p>
+                    </div>
                 </div>
             `;
+            return;
+        }
 
-            timeline.appendChild(item);
-        });
+        timeline.innerHTML = history.map((item) => `
+            <div class="timeline-item">
+                <div class="timeline-date">${escapeHtml(item.date || '--')}</div>
+                <div class="timeline-content">
+                    <h4>${escapeHtml(item.title || 'History Event')}</h4>
+                    <p>${escapeHtml(item.description || '--')}</p>
+                </div>
+            </div>
+        `).join('');
     }
 
-    // =========================
-    // POPULATE VIEW (NO FALLBACK UI)
-    // =========================
     function populate(profile) {
-        if (!profile) return;
+        if (!profile) {
+            return;
+        }
 
-        const role = normalizeRole(profile.position || profile.roleLabel || profile.role || "Employee");
+        const role = normalizeText(profile.position || profile.roleLabel || profile.role || 'Employee');
 
-        document.getElementById('employeeName').textContent = profile.fullName || "--";
-        document.getElementById('employeeRole').textContent = role;
+        setText('#employeeName', profile.fullName || profile.name || '--');
+        setText('#employeeRole', role);
 
         const empId = document.querySelector('.employee-id');
         if (empId) {
-            empId.textContent = `Employee ID: ${profile.employeeNo || profile.id || "--"}`;
+            empId.textContent = `Employee ID: ${profile.employeeNo || profile.id || '--'}`;
         }
 
         const details = document.querySelectorAll('.employment-details p');
-
         if (details[0]) {
-            details[0].innerHTML =
-                `<strong>Status</strong> <span class="status-dot" style="background:${profile.isActive ? '#8ddf9b' : '#ccc'}"></span>
-                ${profile.isActive ? 'Active' : 'Inactive'}`;
+            details[0].innerHTML = `<strong>Status</strong> <span class="status-dot" style="background:${profile.isActive ? '#8ddf9b' : '#ccc'}"></span> ${profile.isActive ? 'Active' : 'Inactive'}`;
+        }
+        if (details[1]) {
+            details[1].innerHTML = `<strong>Position</strong> ${escapeHtml(role)}`;
+        }
+        if (details[2]) {
+            details[2].innerHTML = `<strong>Department</strong> ${escapeHtml((profile.departmentInfo && profile.departmentInfo.name) || profile.department || '--')}`;
+        }
+        if (details[3]) {
+            details[3].innerHTML = `<strong>Employment Type</strong> ${escapeHtml(profile.employmentType || '--')}`;
+        }
+        if (details[4]) {
+            details[4].innerHTML = `<strong>Date Hired</strong> ${escapeHtml(profile.dateHired || '--')}`;
         }
 
-        if (details[1]) details[1].innerHTML = `<strong>Position</strong> ${role}`;
-        if (details[2]) details[2].innerHTML = `<strong>Department</strong> Head Office Department`;
-        if (details[3]) details[3].innerHTML = `<strong>Employment Type</strong> ${profile.employmentType || '--'}`;
-        if (details[4]) details[4].innerHTML = `<strong>Date Hired</strong> ${profile.dateHired || '--'}`;
-
-        // CONTACT
         const contact = document.querySelectorAll('.contact-info p');
-        if (contact[0]) contact[0].innerHTML = `<i class="fas fa-envelope"></i> ${profile.email || '--'}`;
-        if (contact[1]) contact[1].innerHTML = `<i class="fas fa-phone"></i> ${profile.contactNumber || '--'}`;
-        if (contact[2]) contact[2].innerHTML = `<i class="fas fa-location-dot"></i> ${profile.address || '--'}`;
+        if (contact[0]) {
+            contact[0].innerHTML = `<i class="fas fa-envelope"></i> ${escapeHtml(profile.email || '--')}`;
+        }
+        if (contact[1]) {
+            contact[1].innerHTML = `<i class="fas fa-phone"></i> ${escapeHtml(profile.contactNumber || '--')}`;
+        }
+        if (contact[2]) {
+            contact[2].innerHTML = `<i class="fas fa-location-dot"></i> ${escapeHtml(profile.address || '--')}`;
+        }
 
-        // FORCE HISTORY RENDER (IMPORTANT FIX)
-        renderHistory(role);
+        renderDepartment(profile);
+        renderDocuments(profile);
+        renderHistory(profile);
     }
 
-    // =========================
-    // LOAD DATA
-    // =========================
     async function load() {
         const id = getQueryParam('employee_id') || getQueryParam('id');
-        if (!id) return;
+        if (!id) {
+            return;
+        }
 
         try {
-            const res = await fetch(`/api/employees/${encodeURIComponent(id)}`);
-            if (!res.ok) return;
+            const response = await fetch(`/api/employees/${encodeURIComponent(id)}`);
+            if (!response.ok) {
+                throw new Error('Failed to load employee details');
+            }
 
-            const data = await res.json();
+            const data = await response.json();
             populate(data);
-
-        } catch (err) {
-            console.log(err);
+        } catch (error) {
+            console.error(error);
+            const docHeader = document.getElementById('documentHeader');
+            if (docHeader) {
+                docHeader.textContent = 'Unable to load employee records';
+            }
         }
     }
 

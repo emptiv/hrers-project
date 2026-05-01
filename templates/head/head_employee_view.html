@@ -113,16 +113,16 @@
                 <div class="tab-content-item active" id="dept">
                     <div class="info-card">
                         <h4>Department Information</h4>
-                        <div class="info-row"><span>Department</span><span>--</span></div>
-                        <div class="info-row"><span>Code</span><span>--</span></div>
-                        <div class="info-row"><span>Location</span><span>--</span></div>
-                        <div class="info-row"><span>Email</span><span>--</span></div>
-                        <div class="info-row"><span>Contact</span><span>--</span></div>
+                        <div class="info-row"><span>Department</span><span id="departmentName">--</span></div>
+                        <div class="info-row"><span>Department ID</span><span id="departmentId">--</span></div>
+                        <div class="info-row"><span>Location</span><span id="departmentLocation">--</span></div>
+                        <div class="info-row"><span>Email</span><span id="departmentEmail">--</span></div>
+                        <div class="info-row"><span>Head</span><span id="departmentHead">--</span></div>
                     </div>
                 </div>
 
                 <div class="tab-content-item" id="docs">
-                    <div class="doc-header"><span>Loading document records...</span></div>
+                    <div class="doc-header"><span id="documentHeader">Loading document records...</span></div>
                     <table class="doc-table">
                         <thead>
                             <tr>
@@ -135,7 +135,7 @@
                         </thead>
                         <tbody>
                             <tr>
-                                <td colspan="5" style="text-align:center; padding:2rem;">No document records in database.</td>
+                                <td colspan="5" style="text-align:center; padding:2rem;">Loading document records...</td>
                             </tr>
                         </tbody>
                     </table>

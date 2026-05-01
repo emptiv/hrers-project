@@ -1,8 +1,9 @@
 import os
 import csv
+import zipfile
 from collections import defaultdict
 
-from io import StringIO
+from io import BytesIO, StringIO
 
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -182,6 +183,63 @@ def profile_document_to_payload(document: ProfileDocument) -> dict[str, str | No
     }
 
 
+def infer_profile_document_file_metadata(document: ProfileDocument) -> tuple[str, str]:
+    content = bytes(document.file_content or b"")
+    filename_base = str(document.document_name or "Document").replace('"', "").replace("\\", "").replace("/", "")
+    filename_base = Path(filename_base).stem or "Document"
+
+    file_ext = "bin"
+    media_type = "application/octet-stream"
+
+    if content.startswith(b"%PDF-"):
+        file_ext = "pdf"
+        media_type = "application/pdf"
+    elif content.startswith(b"\xff\xd8\xff"):
+        file_ext = "jpg"
+        media_type = "image/jpeg"
+    elif content.startswith(b"\x89PNG\r\n\x1a\n"):
+        file_ext = "png"
+        media_type = "image/png"
+    elif content.startswith(b"GIF87a") or content.startswith(b"GIF89a"):
+        file_ext = "gif"
+        media_type = "image/gif"
+    elif content.startswith(b"RIFF") and len(content) >= 12 and content[8:12] == b"WEBP":
+        file_ext = "webp"
+        media_type = "image/webp"
+    elif content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        file_ext = "doc"
+        media_type = "application/msword"
+    elif content.startswith(b"PK\x03\x04"):
+        try:
+            with zipfile.ZipFile(BytesIO(content)) as archive:
+                names = set(archive.namelist())
+
+            if any(name.startswith("word/") for name in names):
+                file_ext = "docx"
+                media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            elif any(name.startswith("xl/") for name in names):
+                file_ext = "xlsx"
+                media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            elif any(name.startswith("ppt/") for name in names):
+                file_ext = "pptx"
+                media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            else:
+                file_ext = "zip"
+                media_type = "application/zip"
+        except zipfile.BadZipFile:
+            file_ext = "zip"
+            media_type = "application/zip"
+
+    if file_ext == "bin":
+        filename = filename_base
+    elif filename_base.lower().endswith(f".{file_ext}"):
+        filename = filename_base
+    else:
+        filename = f"{filename_base}.{file_ext}"
+
+    return filename, media_type
+
+
 def build_profile_payload(current_user: User, db: Session) -> dict[str, str | bool]:
     latest_position = (
         db.query(PositionChangeRequest)
@@ -352,13 +410,59 @@ def build_employee_detail_payload(user: User, db: Session) -> dict[str, str | bo
         .first()
     )
 
+    department_record = None
     if user.role == UserRole.department_head:
-        head_department = db.query(Department).filter(Department.head_user_id == int(user.id), Department.is_active == True).first()
-        department_name = str(head_department.name) if head_department else "General"
+        department_record = db.query(Department).filter(Department.head_user_id == int(user.id), Department.is_active == True).first()
+        department_name = str(department_record.name) if department_record else "General"
     else:
         department_name = str((latest_position.current_department if latest_position else None) or "General")
+        if department_name and department_name != "General":
+            department_record = (
+                db.query(Department)
+                .filter(Department.name.ilike(department_name), Department.is_active == True)
+                .first()
+            )
 
     position_name = str((latest_position.current_position if latest_position and latest_position.current_position else None) or str(user.role.value).replace("_", " ").title())
+
+    department_head_name = ""
+    if department_record and department_record.head_user_id:
+        department_head = db.query(User).filter(User.id == int(department_record.head_user_id)).first()
+        if department_head:
+            department_head_name = str(department_head.full_name)
+
+    profile_documents = (
+        db.query(ProfileDocument)
+        .filter(ProfileDocument.user_id == int(user.id))
+        .order_by(ProfileDocument.uploaded_at.desc(), ProfileDocument.id.desc())
+        .all()
+    )
+
+    history_rows = (
+        db.query(EmploymentHistory)
+        .filter(EmploymentHistory.user_id == int(user.id))
+        .order_by(EmploymentHistory.event_date.desc(), EmploymentHistory.id.desc())
+        .all()
+    )
+
+    history: list[dict[str, str]] = []
+    for item in history_rows:
+        history.append(
+            {
+                "date": item.event_date.strftime("%Y") if item.event_date else "--",
+                "title": str(item.event_title or "History Event"),
+                "description": str(item.event_description or "--"),
+            }
+        )
+
+    if not history and user.created_at:
+        history.append(
+            {
+                "date": user.created_at.strftime("%Y"),
+                "title": "Hired",
+                "description": f"Joined as {position_name}",
+            }
+        )
 
     return {
         "id": int(user.id),
@@ -378,6 +482,15 @@ def build_employee_detail_payload(user: User, db: Session) -> dict[str, str | bo
         "address": "",
         "emergencyName": "",
         "emergencyPhone": "",
+        "departmentInfo": {
+            "id": int(department_record.id) if department_record else None,
+            "name": str(department_record.name) if department_record else department_name,
+            "location": str(department_record.location or "") if department_record else "",
+            "email": str(department_record.email or "") if department_record else "",
+            "headName": department_head_name,
+        },
+        "documents": [profile_document_to_payload(item) for item in profile_documents],
+        "history": history,
     }
 
 
@@ -838,6 +951,20 @@ def startup() -> None:
                 connection.exec_driver_sql(
                     "ALTER TABLE leave_requests ADD COLUMN approval_stage VARCHAR(40) NOT NULL DEFAULT 'department_head' AFTER status"
                 )
+
+            file_content_type = connection.exec_driver_sql(
+                """
+                SELECT LOWER(data_type)
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'profile_documents'
+                  AND column_name = 'file_content'
+                """
+            ).scalar_one_or_none()
+            if file_content_type and file_content_type != 'longblob':
+                connection.exec_driver_sql(
+                    "ALTER TABLE profile_documents MODIFY COLUMN file_content LONGBLOB NULL"
+                )
     except SQLAlchemyError as exc:
         raise RuntimeError(
             "Unable to connect to the database. Check DATABASE_URL, ensure MySQL is running, and create the hrers_project database before starting the app."
@@ -1281,15 +1408,7 @@ async def download_profile_document(
     if not document.file_content:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file not found")
 
-    safe_filename = document.document_name.replace('"', "").replace("\\", "").replace("/", "")
-    file_ext = document.document_type.lower() if document.document_type else "bin"
-    if file_ext in ("pdf", "jpg", "jpeg", "png", "doc", "docx"):
-        filename = f"{safe_filename}.{file_ext}"
-    else:
-        filename = safe_filename
-
-    # Determine media type based on file extension
-    media_type = get_media_type(file_ext)
+    filename, media_type = infer_profile_document_file_metadata(document)
     
     # Determine Content-Disposition based on mode parameter
     if mode.lower() == "inline":
