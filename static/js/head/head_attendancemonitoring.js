@@ -35,7 +35,7 @@
         if (normalized === 'none' || normalized === '') {
             return isWeekend
                 ? { label: 'Day Off', className: 'pill-neutral' }
-                : { label: 'No Record', className: 'pill-neutral' };
+                : { label: 'Absent', className: 'pill-red' };
         }
 
         return {
@@ -340,6 +340,47 @@
             }).join('');
         }
 
+        function renderModalMonthlyGrid(data) {
+            const gridWrapper = document.getElementById('modalMonthlyGrid');
+            if (!gridWrapper) return;
+            
+            const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+            let gridHtml = dayNames.map(function(d) { return '<div class="month-day-header">' + d + '</div>'; }).join("");
+            
+            for (let i = 0; i < data.firstDayOfWeek; i++) {
+                gridHtml += '<div class="month-day-cell empty"></div>';
+            }
+            
+            for (let d = 1; d <= data.daysInMonth; d++) {
+                const att = data.attendance && data.attendance[d];
+                const isWeekend = (data.firstDayOfWeek + d - 1) % 7 === 0 || (data.firstDayOfWeek + d - 1) % 7 === 6;
+                let statusClass = att ? att.status : (isWeekend ? "weekend" : "");
+                let statusLabel = att ? (att.status.charAt(0).toUpperCase() + att.status.slice(1)) : "Off";
+                
+                // If weekday and no record, default to Absent
+                if (!att && !isWeekend) {
+                    statusClass = "absent";
+                    statusLabel = "Absent";
+                }
+                
+                // Map the classes to pill colors
+                let pillClass = "";
+                if (statusClass === "present" || statusClass === "active") pillClass = "pill-green";
+                else if (statusClass === "late") pillClass = "pill-tan";
+                else if (statusClass === "absent") pillClass = "pill-red";
+                else if (statusClass === "leave" || statusClass === "holiday") pillClass = "pill-purple";
+                else pillClass = "pill-neutral";
+
+                gridHtml += '<div class="month-day-cell">' +
+                    '<span class="day-num">' + d + '</span>' +
+                    (statusClass ? '<span class="day-status pill ' + pillClass + '" style="margin-top:4px;">' + statusLabel + '</span>' : '') +
+                    (att && att.notes ? '<span style="display:block;font-size:0.65rem;color:#6a1b9a;font-style:italic;margin-top:2px;line-height:1.2;">' + att.notes + '</span>' : '') +
+                    (att && att.hours && att.hours !== '--' ? '<span class="day-hours" style="margin-top:auto; font-weight:bold; font-size:0.8rem;">' + att.hours + '</span>' : '') +
+                '</div>';
+            }
+            gridWrapper.innerHTML = gridHtml;
+        }
+
         async function loadModalAttendance() {
             if (!modalEmployeeId) return;
             if (modalTableBody) {
@@ -361,7 +402,21 @@
                 if (dateRangeText) dateRangeText.textContent = payload.label || '--';
                 if (periodText) periodText.textContent = payload.periodText || (modalView === 'monthly' ? 'Month' : 'Week');
                 if (totalHoursValue) totalHoursValue.textContent = payload.total || '0h 00m';
-                renderModalRows(payload.rows || []);
+                if (modalView === 'monthly') {
+                    const tableWrapper = document.querySelector('.modal-table-wrapper .modal-table');
+                    const gridWrapper = document.getElementById('modalMonthlyGrid');
+                    if (tableWrapper) tableWrapper.style.display = 'none';
+                    if (gridWrapper) {
+                        gridWrapper.style.display = 'grid';
+                        renderModalMonthlyGrid(payload);
+                    }
+                } else {
+                    const tableWrapper = document.querySelector('.modal-table-wrapper .modal-table');
+                    const gridWrapper = document.getElementById('modalMonthlyGrid');
+                    if (tableWrapper) tableWrapper.style.display = 'table';
+                    if (gridWrapper) gridWrapper.style.display = 'none';
+                    renderModalRows(payload.rows || []);
+                }
             } catch (error) {
                 renderModalRows([]);
             }

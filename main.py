@@ -1010,23 +1010,10 @@ def build_employee_attendance_period_payload(records: list[AttendanceRecord], vi
     today = date.today()
 
     if view_key == "monthly":
-        month_index = today.month - 1 - safe_offset
-        year = today.year + (month_index // 12)
-        month = (month_index % 12) + 1
-        start_date = date(year, month, 1)
-        if month == 12:
-            next_month = date(year + 1, 1, 1)
-        else:
-            next_month = date(year, month + 1, 1)
-        end_date = next_month - timedelta(days=1)
-        rows, total_seconds = build_attendance_period_rows(records, start_date, end_date)
-        return {
-            "view": "monthly",
-            "label": start_date.strftime("%B %Y"),
-            "periodText": "Month",
-            "rows": rows,
-            "total": format_attendance_duration(total_seconds),
-        }
+        monthly_summary = build_monthly_attendance_summary(records, safe_offset)
+        monthly_summary["view"] = "monthly"
+        monthly_summary["periodText"] = "Month"
+        return monthly_summary
 
     days_since_sunday = (today.weekday() + 1) % 7
     start_date = today - timedelta(days=days_since_sunday + (safe_offset * 7))
@@ -4095,7 +4082,9 @@ def attendance_monitoring(
 
     def get_status_payload(record: AttendanceRecord | None, current_day: date) -> dict[str, str]:
         if not record:
-            return {"status": "none", "label": "", "pillClass": ""}
+            if current_day.weekday() >= 5:
+                return {"status": "day-off", "label": "Day Off", "pillClass": "pill-neutral"}
+            return {"status": "absent", "label": "Absent", "pillClass": "pill-red"}
 
         if record.time_in and not record.time_out and current_day == today:
             return {"status": "active", "label": "Active", "pillClass": "pill-green"}
