@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const logoToggle = document.getElementById('logoToggle');
     const closeBtn = document.getElementById('closeBtn');
     const menuItems = document.querySelectorAll('.menu-item');
+    const employeeId = new URLSearchParams(window.location.search).get('employee_id') || new URLSearchParams(window.location.search).get('id');
 
     // =========================
     // TOOLTIP FIX
@@ -264,8 +265,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // =========================
     // INIT
     // =========================
-    const employeeId =
-        getQueryParam('employee_id') || getQueryParam('id');
+    // =========================
+    // EDIT PROFILE
+    // =========================
+    const editBtn = document.getElementById('editProfileBtn');
+    if (editBtn) {
+        editBtn.addEventListener('click', () => {
+            const employeeId = getQueryParam('employee_id') || getQueryParam('id');
+            if (employeeId) {
+                window.location.href = `sd_employee_edit.html?employee_id=${encodeURIComponent(employeeId)}`;
+            }
+        });
+    }
 
     if (employeeId) {
         loadEmployeeDetail(employeeId);

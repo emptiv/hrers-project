@@ -88,7 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 text: 'Employee record has been updated in the database.',
                 confirmButtonColor: '#4a1d1d',
             }).then(() => {
-                window.location.href = `hr_employee_view.html?employee_id=${encodeURIComponent(employeeId)}`;
+                window.location.href = `sd_employee_view.html?employee_id=${encodeURIComponent(employeeId)}`;
             });
         });
     }
@@ -115,7 +115,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             Swal.fire({ icon: 'success', title: 'Deleted', text: 'Employee record has been deleted.' }).then(() => {
-                window.location.href = 'hr_employeelist.html';
+                window.location.href = 'sd_employeelist.html';
             });
         });
     }

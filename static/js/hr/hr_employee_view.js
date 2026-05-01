@@ -4,6 +4,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const closeBtn = document.getElementById('closeBtn');
     const menuItems = document.querySelectorAll('.menu-item');
 
+    const params = new URLSearchParams(window.location.search);
+    const employeeId = params.get('employee_id') || params.get('id');
+
     // =========================
     // TOOLTIP
     // =========================
@@ -34,6 +37,18 @@ document.addEventListener('DOMContentLoaded', () => {
             if (target) target.classList.add('active');
         });
     });
+
+    // =========================
+    // EDIT PROFILE
+    // =========================
+    const editBtn = document.querySelector('.edit-btn');
+    if (editBtn) {
+        editBtn.addEventListener('click', () => {
+            if (employeeId) {
+                window.location.href = `hr_employee_edit.html?employee_id=${encodeURIComponent(employeeId)}`;
+            }
+        });
+    }
 
     // =========================
     // ROLE HELPERS
@@ -93,9 +108,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // =========================
     // LOAD EMPLOYEE
     // =========================
-    const params = new URLSearchParams(window.location.search);
-    const employeeId = params.get('employee_id') || params.get('id');
-
     async function loadEmployeeDetail() {
         if (!employeeId) return;
 
