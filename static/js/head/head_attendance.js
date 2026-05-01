@@ -254,22 +254,44 @@ async function refreshModalUI() {
     const data = await fetchAttendanceData(currentModalView, currentModalView === "weekly" ? modalWeekOffset : modalMonthOffset);
     
     if (!data) return;
-    historyDateRange.textContent = data.label;
-    totalHoursCount.textContent  = data.total;
+
+    // --- FIX 1: Update the Date Range and Total Hours Display ---
+    if (historyDateRange) {
+        // This shows the "March 1 - March 7" or "October 2023" label
+        historyDateRange.textContent = data.label || "--"; 
+    }
+
+    if (totalHoursCount) {
+        // This updates the sidebar box with the actual hours from the API
+        totalHoursCount.textContent = data.total || "0h 00m";
+    }
+
+    const labelEl = document.getElementById("hoursSummaryLabel");
+    if (labelEl) {
+        labelEl.textContent = (currentModalView === "weekly") 
+            ? "Total Hours This Week" 
+            : "Total Hours This Month";
+    }
+    // -----------------------------------------------------------
 
     if (currentModalView === "weekly") {
         weeklyTable.style.display = "table";
         monthlyGrid.style.display = "none";
-        weeklyTableBody.innerHTML = data.rows.map(r => `
+        
+        // Render table rows
+        const rowsHtml = data.rows.map(r => `
             <tr>
                 <td>${r.date}</td>
                 <td>${r.day}</td>
-                <td>${r.timeIn}</td>
-                <td>${r.timeOut}</td>
-                <td>${r.hours}</td>
+                <td>${r.timeIn || '--'}</td>
+                <td>${r.timeOut || '--'}</td>
+                <td>${r.hours || '--'}</td>
                 <td><span class="status-badge ${r.status}">${capitalize(r.status)}</span></td>
             </tr>
-        `).join("") + `<tr class="total-row"><td colspan="4">Total</td><td colspan="2">${data.total}</td></tr>`;
+        `).join("");
+
+        // Note: Colspan is 4 for labels + 2 for hours/status to match the 6 columns
+        weeklyTableBody.innerHTML = rowsHtml + `<tr class="total-row"><td colspan="4">Total</td><td colspan="2">${data.total}</td></tr>`;
     } else {
         weeklyTable.style.display = "none";
         monthlyGrid.style.display = "grid";

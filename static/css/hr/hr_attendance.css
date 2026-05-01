@@ -1209,7 +1209,23 @@ a.btn-secondary:visited {
 
 }
 
+    .hours-summary-box #hoursSummaryLabel {
+        display: inline-block;
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: #333;
+    }
 
+    .hours-summary-box #totalHoursCount {
+        display: block;
+        font-size: 1.4rem;
+        font-weight: 800;
+        color: var(--brand);
+        margin-top: 4px;
+    }
+    border: 1px solid #e9d5ff;
+
+}
 
 .pill-purple {
 
