@@ -116,7 +116,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 `Employee ID: ${profile.employeeNo || profile.id || '--'}`;
 
             const details = document.querySelectorAll('.employment-details p');
-
             if (details[0]) {
                 details[0].innerHTML = `<strong>Status</strong>
                 <span class="status-dot" style="background:${profile.isActive ? '#8ddf9b' : '#f08d8d'}"></span>
@@ -127,6 +126,20 @@ document.addEventListener('DOMContentLoaded', () => {
             if (details[2]) details[2].innerHTML = `<strong>Department</strong> ${profile.department || '--'}`;
             if (details[3]) details[3].innerHTML = `<strong>Employment Type</strong> ${profile.employmentType || '--'}`;
             if (details[4]) details[4].innerHTML = `<strong>Date Hired</strong> ${profile.dateHired || '--'}`;
+
+            // =========================
+            // DEPARTMENT TAB
+            // =========================
+            const deptInfo = profile.departmentInfo || {};
+            const setDept = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = val || '--';
+            };
+            setDept('departmentName', deptInfo.name || profile.department);
+            setDept('departmentId', deptInfo.id);
+            setDept('departmentLocation', deptInfo.location);
+            setDept('departmentEmail', deptInfo.email);
+            setDept('departmentHead', deptInfo.headName);
 
             // =========================
             // CONTACT

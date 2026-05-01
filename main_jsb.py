@@ -334,11 +334,19 @@ def build_profile_payload(current_user: User, db: Session) -> dict[str, str | bo
         "address": str(user_profile.address or "") if user_profile else "",
         "emergencyName": str(user_profile.emergency_name or "") if user_profile else "",
         "emergencyPhone": str(user_profile.emergency_phone or "") if user_profile else "",
+        "departmentInfo": {
+            "id": int(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().id) if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() else None,
+            "name": department_name,
+            "location": str(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().location or "") if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() else "",
+            "email": str(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().email or "") if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() else "",
+            "headName": str(db.query(User).filter(User.id == int(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().head_user_id)).first().full_name) if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().head_user_id and db.query(User).filter(User.id == int(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().head_user_id)).first() else "",
+        },
         "documents": documents,
         "history": history,
         "documentAlerts": document_alerts,
         "documentAlertCount": len(document_alerts),
     }
+
 
 
 def build_employee_directory_payload(user: User, db: Session) -> dict:
@@ -412,7 +420,15 @@ def build_employee_detail_payload(user: User, db: Session) -> dict[str, str | bo
         "address": "",
         "emergencyName": "",
         "emergencyPhone": "",
+        "departmentInfo": {
+            "id": int(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().id) if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() else None,
+            "name": department_name,
+            "location": str(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().location or "") if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() else "",
+            "email": str(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().email or "") if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() else "",
+            "headName": str(db.query(User).filter(User.id == int(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().head_user_id)).first().full_name) if department_name and department_name != "General" and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first() and db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().head_user_id and db.query(User).filter(User.id == int(db.query(Department).filter(Department.name.ilike(department_name), Department.is_active == True).first().head_user_id)).first() else "",
+        },
     }
+
 
 
 def get_head_department_name(current_user: User, db: Session) -> str | None:

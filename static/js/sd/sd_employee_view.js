@@ -183,6 +183,16 @@ document.addEventListener('DOMContentLoaded', () => {
         safeSet('contactPhone', data.contactNumber);
         safeSet('contactLocation', data.address);
 
+        // =========================
+        // DEPARTMENT TAB
+        // =========================
+        const deptInfo = data.departmentInfo || {};
+        safeSet('deptName', deptInfo.name || data.department);
+        safeSet('deptCode', deptInfo.id);
+        safeSet('deptLocation', deptInfo.location);
+        safeSet('deptEmail', deptInfo.email);
+        safeSet('deptContact', deptInfo.headName);
+
         const statusDot = document.getElementById('statusDot');
         if (statusDot) {
             statusDot.style.background = data.isActive ? '#8ddf9b' : '#ccc';
