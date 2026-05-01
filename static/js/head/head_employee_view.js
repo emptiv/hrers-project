@@ -204,12 +204,22 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
-            const response = await fetch(`/api/employees/${encodeURIComponent(id)}`);
-            if (!response.ok) {
+            const [employeeResponse, documentsResponse] = await Promise.all([
+                fetch(`/api/employees/${encodeURIComponent(id)}`),
+                fetch(`/api/profile/documents?user_id=${encodeURIComponent(id)}`),
+            ]);
+
+            if (!employeeResponse.ok) {
                 throw new Error('Failed to load employee details');
             }
 
-            const data = await response.json();
+            const data = await employeeResponse.json();
+
+            if (documentsResponse.ok) {
+                const documentsPayload = await documentsResponse.json();
+                data.documents = Array.isArray(documentsPayload.documents) ? documentsPayload.documents : [];
+            }
+
             populate(data);
         } catch (error) {
             console.error(error);

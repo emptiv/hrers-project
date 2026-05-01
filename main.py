@@ -349,6 +349,14 @@ def get_head_department_name(current_user: User, db: Session) -> str | None:
     return str(head_department.name) if head_department else None
 
 
+def can_department_head_access_employee(current_user: User, employee: User, db: Session) -> bool:
+    head_department_name = get_head_department_name(current_user, db)
+    if not head_department_name:
+        return False
+
+    return get_user_department_name(employee, db) == head_department_name
+
+
 def get_user_department_name(user: User, db: Session) -> str:
     latest_position = (
         db.query(PositionChangeRequest)
@@ -1397,13 +1405,20 @@ async def download_profile_document(
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    if document.user_id != int(current_user.id) and current_user.role not in (
-        UserRole.admin,
-        UserRole.school_director,
-        UserRole.hr_evaluator,
-        UserRole.hr_head,
-    ):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this document")
+    if document.user_id != int(current_user.id):
+        if current_user.role in (
+            UserRole.admin,
+            UserRole.school_director,
+            UserRole.hr_evaluator,
+            UserRole.hr_head,
+        ):
+            pass
+        elif current_user.role == UserRole.department_head:
+            document_owner = db.query(User).filter(User.id == int(document.user_id)).first()
+            if not document_owner or not can_department_head_access_employee(current_user, document_owner, db):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this document")
+        else:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this document")
 
     if not document.file_content:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file not found")
@@ -1446,6 +1461,14 @@ async def get_profile_documents(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have permission to view these documents"
             )
+
+        if current_user.role == UserRole.department_head and int(current_user.id) != user_id:
+            target_user = db.query(User).filter(User.id == int(user_id), User.role == UserRole.employee).first()
+            if not target_user or not can_department_head_access_employee(current_user, target_user, db):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You do not have permission to view these documents"
+                )
         
         target_user_id = user_id
     else:
