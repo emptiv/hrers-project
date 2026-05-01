@@ -1363,125 +1363,19 @@ hr {
 }
 
 @media print {
-    @page {
-        margin: 1cm;
-        size: A4 portrait;
-    }
-    
-    body {
-        background: #fff !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        color: #000 !important;
-    }
-    
     .sidebar,
     .header-controls,
-    .btn-export,
-    .background {
+    .btn-export {
         display: none !important;
     }
-    
     .main-content {
-        position: relative !important;
-        left: 0 !important;
-        top: 0 !important;
-        width: 100% !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        box-shadow: none !important;
-        overflow: visible !important;
-        background: #fff !important;
-    }
-    
-    .content-wrapper,
-    .dashboard-container {
-        height: auto !important;
-        overflow: visible !important;
-        padding: 0 !important;
-        display: block !important;
-    }
-    
-    .reports-header {
-        border-bottom: 2px solid #000;
-        margin-bottom: 20px;
-        padding-bottom: 10px;
-    }
-    
-    .dashboard-title {
-        color: #000 !important;
-        font-size: 24px !important;
-    }
-    
-    .section-title {
-        color: #000 !important;
-        border-bottom: 1px solid #ccc;
-        margin-top: 30px;
-        margin-bottom: 15px;
-        padding-bottom: 5px;
-        font-size: 18px !important;
-        page-break-after: avoid;
-    }
-    
-    .kpi-grid {
-        display: grid !important;
-        grid-template-columns: repeat(3, 1fr) !important;
-        gap: 15px !important;
-        page-break-inside: avoid;
-    }
-    
-    .chart-row {
-        display: grid !important;
-        grid-template-columns: repeat(2, 1fr) !important;
-        gap: 15px !important;
-        page-break-inside: avoid;
-        margin-bottom: 15px;
-    }
-    
-    .chart-row .chart-card.full-width {
-        grid-column: 1 / -1 !important;
-    }
-    
-    .insights-grid {
-        display: grid !important;
-        grid-template-columns: repeat(3, 1fr) !important;
-        gap: 15px !important;
-        page-break-inside: avoid;
-    }
-    
-    .stats-grid {
-        display: grid !important;
-        grid-template-columns: repeat(2, 1fr) !important;
-        gap: 15px !important;
-        page-break-inside: avoid;
-    }
-    
-    .kpi-card, .chart-card, .insight-card, .stat-item {
-        box-shadow: none !important;
-        border: 1px solid #ccc !important;
-        background: #fff !important;
-        page-break-inside: avoid;
-        padding: 15px !important;
-    }
-    
-    .kpi-card {
-        border-left: 4px solid #555 !important;
-    }
-    
-    .kpi-icon {
-        background: none !important;
-        border: 1px solid #ddd;
-    }
-    
-    .chart-container {
-        height: auto !important;
-        min-height: 250px;
-        background: #fff !important;
+        margin-left: 0 !important;
         padding: 0 !important;
     }
-    
-    * {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
+    body {
+        background: #fff !important;
+    }
+    .background {
+        display: none !important;
     }
 }
