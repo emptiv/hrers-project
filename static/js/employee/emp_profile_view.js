@@ -152,7 +152,9 @@ function renderProfileDocuments(documents) {
                     <td>${type}</td>
                     <td class="${statusClass}">${status}</td>
                     <td>${date}</td>
-                    <td class="actions">---</td>
+                    <td class="actions">
+                        <i class="fas fa-trash-alt action-icon" onclick="openDeleteModal(${doc.id}, '${name}')" title="Delete" style="cursor: pointer;"></i>
+                    </td>
                 </tr>
             `;
         }
@@ -166,6 +168,7 @@ function renderProfileDocuments(documents) {
                 <td class="actions">
                     <a href="${url}?mode=inline" target="_blank" title="View"><i class="fas fa-eye action-icon"></i></a>
                     <a href="${url}?mode=attachment" download title="Download"><i class="fas fa-download action-icon"></i></a>
+                    <i class="fas fa-trash-alt action-icon" onclick="openDeleteModal(${doc.id}, '${name}')" title="Delete" style="cursor: pointer;"></i>
                 </td>
             </tr>
         `;

@@ -97,7 +97,8 @@ function applyProfileToView(profile) {
                         <td>${doc.dateUploaded || '--'}</td>
                         <td class="actions">
                             ${doc.url ? `<a href="${doc.url}?mode=inline" target="_blank" title="View"><i class="fas fa-eye action-icon"></i></a>
-                                        <a href="${doc.url}?mode=attachment" download title="Download"><i class="fas fa-download action-icon"></i></a>` : '---'}
+                                        <a href="${doc.url}?mode=attachment" download title="Download"><i class="fas fa-download action-icon"></i></a>
+                                        <i class="fas fa-trash-alt action-icon" onclick="openDeleteModal(${doc.id}, '${doc.name}')" title="Delete" style="cursor: pointer;"></i>` : `<i class="fas fa-trash-alt action-icon" onclick="openDeleteModal(${doc.id}, '${doc.name}')" title="Delete" style="cursor: pointer;"></i>`}
                         </td>
                     </tr>
                 `;
